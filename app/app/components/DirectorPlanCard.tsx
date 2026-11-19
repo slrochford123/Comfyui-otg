@@ -1,4 +1,5 @@
 "use client";
+import React from "react";
 import type { DirectorPlan } from "@/lib/experiments/director3060";
 const button = "min-h-11 rounded-lg border border-white/20 px-3 py-2 text-sm";
 function sceneText(shot: DirectorPlan["shots"][number]) {

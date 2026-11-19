@@ -46,7 +46,7 @@ async function open() {
   fireEvent.loadedMetadata(video);
   return dialog;
 }
-it.each(["reference", "edit", "image", "edit-image"])("adds a JPEG frame in %s mode, retaining originals and never generating", async mode => {
+it.each(["reference", "edit", "image"])("adds a JPEG frame in %s mode, retaining originals and never generating", async mode => {
   session.settings.mode = mode;
   const dialog = await open(); fireEvent.click(within(dialog).getByRole("button", { name: "Use Snapshot", exact: true }));
   await waitFor(() => expect(uploads).toHaveLength(1));
@@ -82,3 +82,5 @@ it("does not offer an image reference in text-only mode", async () => {
   session.settings.mode = "text"; render(<H3NsfwStudio />); await screen.findByLabelText("Your scene");
   expect(screen.queryByRole("button", { name: "Snapshot", exact: true })).not.toBeInTheDocument();
 });
+
+it("keeps legacy image-edit drafts out of the qualified video Snapshot path",async()=>{session.settings.mode="edit-image";render(<H3NsfwStudio/>);await screen.findByLabelText("Your scene");expect(screen.queryByRole("button",{name:"Generate Video",exact:true})).not.toBeInTheDocument();});

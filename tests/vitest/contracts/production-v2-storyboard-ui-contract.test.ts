@@ -37,16 +37,16 @@ describe(
           '"Scene Hunter · 0.2 MP native (608x352) quick scene search"',
         );
         expect(source).toContain(
-          '"1.0 MP native (1376x768) + RTX VSR ULTRA"',
+          '"1.0 MP native (1376x768)"',
         );
         expect(source).toContain(
-          '"0.6 MP native (1056x608) + RTX VSR ULTRA"',
+          '"0.6 MP native (1056x608)"',
         );
 
         expect(
           source,
         ).toContain(
-          "+ RTX VSR ULTRA",
+          "1080p",
         );
 
         expect(

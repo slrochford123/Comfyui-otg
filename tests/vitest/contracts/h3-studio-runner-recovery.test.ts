@@ -84,7 +84,7 @@ vi.mock("@/lib/ownerKey", () => ({ getOwnerContext: m.owner, SessionInvalidError
 vi.mock("@/lib/sessionUser", () => ({ requireSessionUser: m.session }));
 vi.mock("@/lib/h3StagedUploads", () => ({ readCompletedH3StagedUpload: m.unexpected }));
 vi.mock("@/lib/h3ReferenceVideoClip", () => ({ trimH3ReferenceVideoClip: m.unexpected }));
-vi.mock("@/lib/h3StylePresets", () => ({ composeH3StylePrompt: m.unexpected, resolveH3StylePreset: m.unexpected }));
+vi.mock("@/lib/h3StylePresets", async original => ({...await original<typeof import("@/lib/h3StylePresets")>(), composeH3StylePrompt: m.unexpected, resolveH3StylePreset: m.unexpected }));
 vi.mock("sharp", () => ({ default: m.unexpected }));
 
 const OWNER = "qa-recovery-owner", SESSION = "qa-recovery-session";

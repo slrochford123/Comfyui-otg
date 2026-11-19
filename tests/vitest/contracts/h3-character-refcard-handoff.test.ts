@@ -4,7 +4,7 @@ const source=fs.readFileSync("app/app/components/H3Panel.tsx","utf8");
 const start=source.indexOf("function consume(entry: H3RefModLibraryEntry"),end=source.indexOf("window.addEventListener(H3_REFMOD_USE_IN_H3_EVENT",start);
 const consume=source.slice(start,end);
 it("opens actual RefMod generation controls instead of leaving a saved card in Auto Studio",()=>{
-  for(const action of ['setStudioController("manual")','setManualControlsOpen(false)','setVideoEditOpen(false)','setImageCreateOpen(false)','showNsfw(false)','setStudioMode("h3-refmods")','addRefModSlot(entry)'])expect(consume).toContain(action);
+  for(const action of ['setManualControlsOpen(false)','setVideoEditOpen(false)','setImageCreateOpen(false)','showNsfw(false)','selectStudioMode("h3-reference-to-video")','addRefModSlot(entry)'])expect(consume).toContain(action);
   expect(consume).not.toMatch(/cancel|interrupt|resetH3/);
 });
 it("consumes pending RefMods only after owner-scoped media/slot restoration",()=>{

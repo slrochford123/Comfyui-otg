@@ -32,14 +32,14 @@ afterEach(() => {
 });
 
 function openLegacyManual() {
-  fireEvent.click(screen.getByRole("button", { name: "Manual Mode" }));
-  const legacy = document.querySelector('[data-otg="h3-legacy-manual-tools"]') as HTMLElement;
+
+  const legacy = document.querySelector('[data-otg="h3-video-workspace"]') as HTMLElement;
   expect(legacy.hidden).toBe(false);
-  return within(legacy);
+  return screen;
 }
 
 function writePrompt() {
-  const legacy = document.querySelector('[data-otg="h3-legacy-manual-tools"]') as HTMLElement;
+  const legacy = document.querySelector('[data-otg="h3-video-workspace"]') as HTMLElement;
   fireEvent.change(
     within(legacy).getByPlaceholderText("Describe the scene, action, camera, dialogue, and sound."),
     { target: { value: "Two samurai fight in moonlight." } },
@@ -58,8 +58,8 @@ describe("H3 orientation and optional Builder UI", () => {
     fireEvent.click(portrait);
     expect(landscape.getAttribute("aria-pressed")).toBe("false");
     expect(portrait.getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(screen.getByRole("tab", { name: /Image/ }));
-    fireEvent.click(screen.getByRole("tab", { name: /Reference/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Image",exact:true }));
+    fireEvent.click(screen.getByRole("button", { name: "Reference",exact:true }));
     expect(portrait.getAttribute("aria-pressed")).toBe("true");
   });
 
@@ -69,7 +69,7 @@ describe("H3 orientation and optional Builder UI", () => {
     expect(screen.getByRole("button", { name: /Add Prompt and Required Inputs/ }).hasAttribute("disabled")).toBe(true);
     writePrompt();
     expect(screen.getByRole("button", { name: "Generate Video" }).hasAttribute("disabled")).toBe(false);
-    expect(screen.getByRole("button", { name: /Prompt Builder/ }).textContent).toContain("Optional");
+    expect(screen.getByRole("button", { name: "Direct Scene",exact:true })).toBeTruthy();
   });
 
   it("submits raw text and orientation without calling Ollama", async () => {
@@ -145,48 +145,15 @@ describe("H3 orientation and optional Builder UI", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/h3/prompt")).toBe(false);
   });
 
-  it("keeps Builder assistance selectable and lets stale output return to raw", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.startsWith("/api/h3/loras")) {
-        return new Response(JSON.stringify({ ok: true, entries: [], maxSelections: 3 }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-      if (url === "/api/h3/prompt") {
-        return new Response(JSON.stringify({ ok: true, pollUrl: "/api/prompt-result" }), {
-          status: 202,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-      return new Response(JSON.stringify({
-        ok: true,
-        status: "completed",
-        result: { scenePrompt: "A polished cinematic suggestion." },
-      }), { status: 200, headers: { "Content-Type": "application/json" } });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    render(<H3Panel />);
-    const screen = openLegacyManual();
-    writePrompt();
-    fireEvent.click(screen.getByRole("button", { name: /Prompt Builder/ }));
-    await screen.findByText("Ollama Suggestion");
-    fireEvent.click(screen.getByRole("button", { name: "Use Suggested Prompt" }));
-    expect(screen.getByText("Builder prompt selected")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Portrait" }));
-    expect(screen.getByRole("button", { name: /Use Raw Prompt or Review Builder/ }).hasAttribute("disabled")).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Use Current Raw Prompt" }));
-    expect(screen.getByRole("button", { name: "Generate Video" }).hasAttribute("disabled")).toBe(false);
-  });
+  it("keeps scene direction optional while preserving the raw scene",()=>{render(<H3Panel/>);const ui=openLegacyManual();writePrompt();const scene=ui.getByRole("textbox",{name:"Scene description"});expect(ui.getByRole("button",{name:"Direct Scene",exact:true})).toBeTruthy();expect(scene).toHaveProperty("value","Two samurai fight in moonlight.");expect(ui.getByRole("button",{name:"Generate Video",exact:true})).toHaveProperty("disabled",false);});
 
   it("enables direct I2V only after a First Image is present", () => {
     render(<H3Panel />);
     const screen = openLegacyManual();
-    fireEvent.click(screen.getByRole("tab", { name: /Image/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Image",exact:true }));
     writePrompt();
     expect(screen.getByRole("button", { name: /Add Prompt and Required Inputs/ }).hasAttribute("disabled")).toBe(true);
-    const upload = document.querySelector('[data-otg="h3-legacy-manual-tools"] input[type="file"][accept^="image/*"]') as HTMLInputElement;
+    const upload = document.querySelector('[data-otg="h3-video-workspace"] input[type="file"][accept^="image/*"]') as HTMLInputElement;
     fireEvent.change(upload, {
       target: { files: [new File(["image"], "first.png", { type: "image/png" })] },
     });
@@ -196,10 +163,10 @@ describe("H3 orientation and optional Builder UI", () => {
   it("enables direct R2V only after a native reference is present", () => {
     render(<H3Panel />);
     const screen = openLegacyManual();
-    fireEvent.click(screen.getByRole("tab", { name: /Reference/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Reference",exact:true }));
     writePrompt();
     expect(screen.getByRole("button", { name: /Add Prompt and Required Inputs/ }).hasAttribute("disabled")).toBe(true);
-    const upload = document.querySelector('[data-otg="h3-legacy-manual-tools"] input[type="file"][accept^="image/*"]') as HTMLInputElement;
+    const upload = document.querySelector('[data-otg="h3-video-workspace"] input[type="file"][accept^="image/*"]') as HTMLInputElement;
     fireEvent.change(upload, {
       target: { files: [new File(["image"], "hero.png", { type: "image/png" })] },
     });

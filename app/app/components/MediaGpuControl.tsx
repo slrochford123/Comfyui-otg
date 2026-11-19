@@ -1,4 +1,5 @@
 "use client";
+import React from "react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { MEDIA_GPU_COOKIE, parseMediaGpuChoice, type MediaGpuChoice } from "@/lib/mediaGpuRouting";
 

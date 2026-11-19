@@ -1,4 +1,5 @@
 "use client";
+import React from "react";
 import H3EnhanceButtons from "./H3EnhanceButtons";
 import H3ClipLengthControl from "./H3ClipLengthControl";
 import {labFinalPrompt} from "@/lib/experiments/creative";

@@ -1,4 +1,5 @@
 "use client";
+import React from "react";
 import { useEffect, useRef, useState } from "react";
 import { LAB_WORKFLOWS, RATING_LABELS, REFMOD_LAB_API, REPLACEMENT_DEFAULTS, type ReplacementSettings, type Evaluation } from "@/lib/refmodLab/contract";
 import type { ReplacementRun } from "@/lib/refmodLab/server";

@@ -1,4 +1,5 @@
 "use client";
+import React from "react";
 import AutoAssets from "./AutoAssets";
 import { useState } from "react";
 import type { Asset } from "@/lib/productionStudio/model";

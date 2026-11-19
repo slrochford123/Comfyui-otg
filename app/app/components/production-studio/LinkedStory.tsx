@@ -1,4 +1,5 @@
 "use client";
+import React from "react";
 import {useState} from "react";
 import type {useStudio} from "./useStudio";
 import type {HandoffPreview} from "@/lib/productionStudio/storyHandoffTypes";

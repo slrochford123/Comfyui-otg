@@ -585,6 +585,208 @@ async function renderFixVoices(request: NextRequest, owner: string, body: Record
   }
 }
 
+// Preserve the existing Production Audio route; H3 Change Voice uses renderFixVoices above.
+type AudioStudioMixPlanV36BPW9 = {
+  sourceBedPath: string;
+  sourceBedKind: "demucs_background" | "original_audio";
+  sourceBedKeepsOriginalDialogue: boolean;
+};
+
+function analysisBackgroundStemPathV36BPW9(body: any) {
+  const value = String(
+    body?.audioClipAnalysis?.separation?.backgroundStemPath ||
+      body?.audioClipAnalysis?.backgroundStemPath ||
+      "",
+  ).trim();
+  if (!value || !path.isAbsolute(value) || !fssync.existsSync(value)) return "";
+  return value;
+}
+
+async function extractAudioSegmentV36BPW5(sourceVideoPath: string, segment: AudioStudioVoiceSegmentV36BPW5, outputPath: string) {
+  const duration = Math.max(0.05, segment.end - segment.start);
+  await execFileAsync(
+    FFMPEG_BIN,
+    [
+      "-y",
+      "-ss",
+      String(segment.start),
+      "-t",
+      String(duration),
+      "-i",
+      sourceVideoPath,
+      "-vn",
+      "-ac",
+      "1",
+      "-ar",
+      "44100",
+      "-c:a",
+      "pcm_s16le",
+      outputPath,
+    ],
+    { timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024 * 20, windowsHide: true },
+  );
+}
+
+async function runVoiceDubForSegmentV36BPW5(request: NextRequest, segmentPath: string, voicePath: string, title: string, engine: string) {
+  const segmentBytes = await fs.readFile(segmentPath);
+  const form = new FormData();
+  form.append("performance_audio", new Blob([new Uint8Array(segmentBytes)], { type: "audio/wav" }), path.basename(segmentPath));
+  form.append("voice_path", voicePath);
+  form.append("engine", engine || "auto");
+  form.append("title", title);
+
+  const dubResponse = await fetch(new URL("/api/voice/dub", request.nextUrl.origin), {
+    method: "POST",
+    body: form,
+    headers: { cookie: request.headers.get("cookie") || "" },
+    cache: "no-store",
+  });
+
+  const dubJson = await dubResponse.json().catch(() => null);
+  if (!dubResponse.ok || !dubJson?.ok) {
+    throw new Error(dubJson?.error || `Voice dub failed (${dubResponse.status}).`);
+  }
+
+  const dubbedAudioPath = String(dubJson.audioPath || "").trim();
+  if (!dubbedAudioPath || !fssync.existsSync(dubbedAudioPath)) {
+    throw new Error("Voice dub completed but did not return a readable dubbed audio file.");
+  }
+
+  return { audioPath: dubbedAudioPath, dub: dubJson };
+}
+
+async function mixRenderedSegmentsV36BPW5(
+  sourceVideoPath: string,
+  renderedSegments: AudioStudioRenderedSegmentV36BPW5[],
+  outputPath: string,
+  mixPlan: AudioStudioMixPlanV36BPW9,
+) {
+  if (!renderedSegments.length) throw new Error("No dubbed speaker segments were generated.");
+
+  // OTG_AUDIO_STUDIO_PRESERVE_SOURCE_BED_V36BPW6
+  // OTG_AUDIO_STUDIO_REMOVE_DOUBLED_ORIGINAL_VOICE_V36BPW7
+  // Use the separated no-vocals bed when analysis produced one. Otherwise preserve the original
+  // audio bed outside mapped dialogue, but remove it during mapped dubbed segments so the source
+  // voice does not double against the replacement voice.
+  const sourceBedVolumeRaw = Number(process.env.OTG_AUDIO_STUDIO_SOURCE_BED_VOLUME ?? 1);
+  const mappedDialogueBedVolumeRaw = Number(
+    process.env.OTG_AUDIO_STUDIO_MAPPED_DIALOGUE_BED_VOLUME ??
+      (mixPlan.sourceBedKeepsOriginalDialogue ? 0 : 1),
+  );
+  // OTG_AUDIO_STUDIO_DUBBED_VOICE_GAIN_V36BPW8
+  // Segment voice conversion often returns quieter audio than the original clip bed.
+  // Boost the dubbed segments before mixing and apply a limiter after the final mix.
+  const dubbedVoiceVolumeRaw = Number(process.env.OTG_AUDIO_STUDIO_DUBBED_VOICE_VOLUME ?? 1.8);
+  const sourceBedVolume = Number.isFinite(sourceBedVolumeRaw) ? Math.max(0, Math.min(2, sourceBedVolumeRaw)) : 1;
+  const duckedSourceBedVolume = Number.isFinite(mappedDialogueBedVolumeRaw) ? Math.max(0, Math.min(1, mappedDialogueBedVolumeRaw)) : 0;
+  const dubbedVoiceVolume = Number.isFinite(dubbedVoiceVolumeRaw) ? Math.max(0.25, Math.min(4, dubbedVoiceVolumeRaw)) : 1.8;
+
+  const args = ["-y", "-i", sourceVideoPath];
+  let renderedInputOffset = 1;
+  let baseInputLabel = "[0:a]";
+  if (mixPlan.sourceBedPath) {
+    args.push("-i", mixPlan.sourceBedPath);
+    renderedInputOffset = 2;
+    baseInputLabel = "[1:a]";
+  }
+  for (const rendered of renderedSegments) args.push("-i", rendered.audioPath);
+
+  let sourceBedFilter = `${baseInputLabel}volume=${sourceBedVolume}`;
+  for (const rendered of renderedSegments) {
+    if (mixPlan.sourceBedKeepsOriginalDialogue && rendered.segment.end > rendered.segment.start) {
+      sourceBedFilter += `,volume=enable='between(t,${rendered.segment.start},${rendered.segment.end})':volume=${duckedSourceBedVolume}`;
+    }
+  }
+
+  const filters: string[] = [`${sourceBedFilter}[base]`];
+  const labels: string[] = ["[base]"];
+
+  renderedSegments.forEach((rendered, index) => {
+    const inputIndex = index + renderedInputOffset;
+    const duration = Math.max(0.05, rendered.segment.end - rendered.segment.start);
+    const delayMs = Math.max(0, Math.round(rendered.segment.start * 1000));
+    const label = `seg${index}`;
+    filters.push(`[${inputIndex}:a]atrim=0:${duration},apad,atrim=0:${duration},asetpts=PTS-STARTPTS,volume=${dubbedVoiceVolume},adelay=${delayMs}|${delayMs}[${label}]`);
+    labels.push(`[${label}]`);
+  });
+
+  filters.push(`${labels.join("")}amix=inputs=${labels.length}:duration=longest:dropout_transition=0,alimiter=limit=0.95[outa]`);
+
+  await execFileAsync(
+    FFMPEG_BIN,
+    [...args, "-filter_complex", filters.join(";"), "-map", "[outa]", "-c:a", "aac", "-b:a", "192k", outputPath],
+    { timeout: 20 * 60 * 1000, maxBuffer: 1024 * 1024 * 40, windowsHide: true },
+  );
+}
+async function renderLegacySegmentFirstDubV36BPW5(
+  request: NextRequest,
+  sourceVideoPath: string,
+  voiceMappings: AudioStudioVoiceMappingV36BPW5[],
+  workDir: string,
+  runId: string,
+  body: any,
+) {
+  const renderedSegments: AudioStudioRenderedSegmentV36BPW5[] = [];
+  const baseTitle = safeName(body.title || "audio_studio_dub", "audio_studio_dub");
+  const backgroundStemPath = analysisBackgroundStemPathV36BPW9(body);
+  if (backgroundStemPath && !await productionAudioMediaReadable(request, backgroundStemPath)) throw new ProductionAudioAccessError();
+  const mixPlan: AudioStudioMixPlanV36BPW9 = {
+    sourceBedPath: backgroundStemPath,
+    sourceBedKind: backgroundStemPath ? "demucs_background" : "original_audio",
+    sourceBedKeepsOriginalDialogue: !backgroundStemPath,
+  };
+
+  for (const [mappingIndex, mapping] of voiceMappings.entries()) {
+    if (!mapping.segments.length && voiceMappings.length > 1) {
+      throw new Error(`Detected ${mapping.voiceId} has no diarization segments. Re-analyze the clip before starting multi-voice dub.`);
+    }
+
+    const segments = mapping.segments.length
+      ? mapping.segments
+      : [{ start: 0, end: 0 }];
+
+    for (const [segmentIndex, rawSegment] of segments.entries()) {
+      const segment = rawSegment.end > rawSegment.start
+        ? rawSegment
+        : { start: 0, end: 60 * 60 };
+
+      const segmentPath = safeJoin(
+        workDir,
+        `${safeSegment(mapping.voiceId || `speaker_${mappingIndex + 1}`)}_${String(segmentIndex + 1).padStart(3, "0")}.wav`,
+      );
+
+      if (rawSegment.end > rawSegment.start) {
+        await extractAudioSegmentV36BPW5(sourceVideoPath, rawSegment, segmentPath);
+      } else {
+        await execFileAsync(
+          FFMPEG_BIN,
+          ["-y", "-i", sourceVideoPath, "-vn", "-ac", "1", "-ar", "44100", "-c:a", "pcm_s16le", segmentPath],
+          { timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024 * 20, windowsHide: true },
+        );
+      }
+
+      const dubbed = await runMappedVoiceDubForSegmentV36BPW5(
+        request,
+        segmentPath,
+        mapping,
+        `${baseTitle}_${safeSegment(mapping.voiceId || `speaker_${mappingIndex + 1}`)}_${String(segmentIndex + 1).padStart(3, "0")}_${runId}`,
+      );
+
+      renderedSegments.push({
+        mapping,
+        segment: rawSegment.end > rawSegment.start ? rawSegment : { start: 0, end: 60 * 60 },
+        audioPath: dubbed.audioPath,
+      });
+    }
+  }
+
+  const dubbedAudioPath = safeJoin(workDir, "segment_first_dubbed_audio.m4a");
+  await mixRenderedSegmentsV36BPW5(sourceVideoPath, renderedSegments, dubbedAudioPath, mixPlan);
+
+  return { dubbedAudioPath, renderedSegments, mixPlan };
+}
+
+
 export async function POST(request: NextRequest) {
   try {
     const ownerKey = await ownerKeyFromRequest(request);
@@ -614,14 +816,8 @@ export async function POST(request: NextRequest) {
     await fs.mkdir(workDir, { recursive: true });
 
     const sourceVideoPath = await findSourceVideo(body, request, workDir);
-    const { dubbedAudioPath, renderedSegments, skippedSegments, mixPlan } = await renderSegmentFirstDubV36BPW5(
-      request,
-      ownerKey,
-      sourceVideoPath,
-      voiceMappings,
-      workDir,
-      body,
-    );
+    const { dubbedAudioPath, renderedSegments, mixPlan } = await renderLegacySegmentFirstDubV36BPW5(request, sourceVideoPath, voiceMappings, workDir, runId, body);
+    const skippedSegments: VoiceCorrectionSkip[] = [];
 
     const previewPath = safeJoin(workDir, `${safeName(body.title || "dubbed-preview", "dubbed-preview")}.mp4`);
     await muxDubbedAudio(sourceVideoPath, dubbedAudioPath, previewPath);

@@ -164,7 +164,7 @@ describe("shared physical media routing",()=>{
   });
   it("does not mistake a restart during uncertain submission for proof of failed execution",async()=>{
     mocks.instance.mockResolvedValue({instance:worker,previousStopped:false});
-    mocks.submit.mockImplementation(async args=>{await args.beforeSubmit();throw Error("lost POST");});
+    mocks.submit.mockImplementation(async args=>{await args.beforeSubmit();args.onPostAttempt?.();throw Error("lost POST");});
     const first=await(await enqueueComfyMedia(payload())).json();await enqueueComfyMedia(payload());await tickMediaGpuQueue();await flush();
     mocks.instance.mockResolvedValue({instance:{...worker,pid:124},previousStopped:true});await tickMediaGpuQueue();
     expect(getMediaQueueJob(first.prompt_id)?.status).toBe("unknown");expect(mocks.submit).toHaveBeenCalledTimes(1);
@@ -251,7 +251,7 @@ describe("shared physical media routing",()=>{
     await tickMediaGpuQueue();expect(mocks.submit).not.toHaveBeenCalled();expect(getMediaQueueJob(prompt_id)?.status).toBe("canceled");
   });
   it("retains unknown submission ownership and never duplicates it",async()=>{
-    mocks.submit.mockImplementation(async args=>{await args.beforeSubmit?.();throw Error("network disconnected after POST");});
+    mocks.submit.mockImplementation(async args=>{await args.beforeSubmit?.();args.onPostAttempt?.();throw Error("network disconnected after POST");});
     const {prompt_id}=await(await enqueueComfyMedia(payload())).json();await enqueueComfyMedia(payload());
     await tickMediaGpuQueue();await flush();await tickMediaGpuQueue();
     expect(getMediaQueueJob(prompt_id)?.status).toBe("unknown");expect(mocks.submit).toHaveBeenCalledTimes(1);
@@ -265,7 +265,7 @@ describe("shared physical media routing",()=>{
     await tickMediaGpuQueue();await flush();expect(mocks.submit).toHaveBeenCalledTimes(2);
   });
   it("retains ownership after a 503 response from the actual POST",async()=>{
-    mocks.submit.mockImplementation(async args=>{await args.beforeSubmit?.();return Response.json({error:"inconclusive"},{status:503});});
+    mocks.submit.mockImplementation(async args=>{await args.beforeSubmit?.();args.onPostAttempt?.();return Response.json({error:"inconclusive"},{status:503});});
     const {prompt_id}=await(await enqueueComfyMedia(payload())).json();await enqueueComfyMedia(payload());await tickMediaGpuQueue();await flush();await tickMediaGpuQueue();
     expect(getMediaQueueJob(prompt_id)?.status).toBe("unknown");expect(mocks.submit).toHaveBeenCalledTimes(1);
   });

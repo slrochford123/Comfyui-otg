@@ -1,4 +1,5 @@
 "use client";
+import React from "react";
 import {useEffect,useState,useRef} from 'react';
 import type {useStudio} from './useStudio';
 import {isAudioRequirement} from '@/lib/productionStudio/createTypes';

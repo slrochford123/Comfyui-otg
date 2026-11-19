@@ -357,6 +357,8 @@ export default function VideoSnapshotPicker({
       null,
     );
   const captureGuard = useRef(false);
+  const insertingGuard = useRef(false);
+  const [inserting,setInserting] = useState(false);
   const captureEpoch = useRef(0);
   useEffect(() => () => { captureEpoch.current++; }, []);
 
@@ -482,6 +484,7 @@ export default function VideoSnapshotPicker({
           if (
             event.key === "Escape"
             && !capturing
+            && !insertingGuard.current
           ) {
             onClose();
           }
@@ -735,24 +738,16 @@ export default function VideoSnapshotPicker({
   }
 
   async function useSnapshot(boundary?: "first" | "last") {
-    const epoch = captureEpoch.current;
-    const result =
-      await captureFrame(boundary);
-
-    if (!result || epoch !== captureEpoch.current) {
-      return;
-    }
-
-    setMessage(
-      `Captured frame in ${result.captureDurationMs} ms. Saving snapshot...`,
-    );
-
+    if(insertingGuard.current)return;
+    insertingGuard.current=true;setInserting(true);
     try {
-      await onSnapshot(result);
-      onClose();
-    } catch {
-      setMessage("The frame was captured but could not be inserted. Try again.");
-    }
+      const epoch=captureEpoch.current;
+      const result=await captureFrame(boundary);
+      if(!result||epoch!==captureEpoch.current)return;
+      setMessage(`Captured frame in ${result.captureDurationMs} ms. Saving snapshot...`);
+      await onSnapshot(result);onClose();
+    } catch {setMessage("The frame was captured but could not be inserted. Try again.");}
+    finally{insertingGuard.current=false;setInserting(false);}
   }
 
   async function downloadSnapshot() {
@@ -840,9 +835,10 @@ export default function VideoSnapshotPicker({
   }
 
   async function useEditedFrame() {
+    if(insertingGuard.current)return;
     if (!editSource || !candidateUrl || editing) return;
     const epoch = captureEpoch.current;
-    setEditing(true);
+    insertingGuard.current=true;setInserting(true);setEditing(true);
     try {
       const response = await fetch(candidateUrl);
       if (!response.ok) throw Error("The edited frame could not be loaded.");
@@ -853,6 +849,7 @@ export default function VideoSnapshotPicker({
     } catch (error) {
       if (epoch === captureEpoch.current) setMessage(error instanceof Error ? error.message : "Could not use the edited frame.");
     } finally {
+      insertingGuard.current=false;setInserting(false);
       if (epoch === captureEpoch.current) setEditing(false);
     }
   }
@@ -884,7 +881,7 @@ export default function VideoSnapshotPicker({
 
           <button
             type="button"
-            disabled={capturing}
+            disabled={capturing || inserting}
             onClick={onClose}
             aria-label="Close Snapshot"
             className="flex h-8 w-8 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-lg font-bold text-zinc-300 transition hover:border-white/25 hover:text-white disabled:opacity-40"
@@ -906,7 +903,7 @@ export default function VideoSnapshotPicker({
               <button type="button" onClick={cancelFrameEdit}>Cancel</button>
               {candidateUrl && <>
                 <a href={candidateUrl + "&download=1"} download>Download</a>
-                <button type="button" disabled={editing} onClick={() => void useEditedFrame()}>Use Frame</button>
+                <button type="button" disabled={editing||inserting} onClick={() => void useEditedFrame()}>Use Frame</button>
               </>}
             </div>
           </section>}
@@ -1019,7 +1016,7 @@ export default function VideoSnapshotPicker({
                       ),
                     )
                   }
-                  disabled={!ready || capturing}
+                  disabled={!ready || capturing || inserting}
                   onChange={(event) => {
                     seekTo(
                       Number(
@@ -1048,7 +1045,7 @@ export default function VideoSnapshotPicker({
               <div className="flex items-center justify-center gap-2">
                 <button
                   type="button"
-                  disabled={!ready || seeking || capturing}
+                  disabled={!ready || seeking || capturing || inserting}
                   onClick={() =>
                     seekTo(
                       currentTime
@@ -1062,7 +1059,7 @@ export default function VideoSnapshotPicker({
 
                 <button
                   type="button"
-                  disabled={!ready || seeking || capturing}
+                  disabled={!ready || seeking || capturing || inserting}
                   onClick={() =>
                     seekTo(
                       currentTime
@@ -1076,8 +1073,8 @@ export default function VideoSnapshotPicker({
               </div>
 
               <div className="grid grid-cols-2 gap-2" aria-label="Use video boundary frame as input image">
-                <button type="button" disabled={!ready || seeking || capturing} onClick={() => void useSnapshot("first")} className="min-h-11 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-sm font-bold text-cyan-100 disabled:opacity-35">Use First Frame</button>
-                <button type="button" disabled={!ready || seeking || capturing} onClick={() => void useSnapshot("last")} className="min-h-11 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-sm font-bold text-cyan-100 disabled:opacity-35">Use Last Frame</button>
+                <button type="button" disabled={!ready || seeking || capturing || inserting} onClick={() => void useSnapshot("first")} className="min-h-11 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-sm font-bold text-cyan-100 disabled:opacity-35">Use First Frame</button>
+                <button type="button" disabled={!ready || seeking || capturing || inserting} onClick={() => void useSnapshot("last")} className="min-h-11 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-sm font-bold text-cyan-100 disabled:opacity-35">Use Last Frame</button>
               </div>
               <p className="text-xs text-zinc-400">Select the video's first or last frame and insert it as the chosen image input.</p>
               <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-4">
@@ -1106,7 +1103,7 @@ export default function VideoSnapshotPicker({
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    disabled={capturing}
+                    disabled={capturing || inserting}
                     onClick={onClose}
                     className="min-h-9 rounded-md border border-white/10 bg-white/[0.04] px-3 text-xs font-black text-zinc-300 transition hover:border-white/25 hover:text-white disabled:opacity-35"
                   >
@@ -1115,7 +1112,7 @@ export default function VideoSnapshotPicker({
 
                   <button
                     type="button"
-                    disabled={!ready || seeking || capturing}
+                    disabled={!ready || seeking || capturing || inserting}
                     onClick={() => void downloadSnapshot()}
                     aria-label="Download Snapshot"
                     className="min-h-9 rounded-md border border-white/10 bg-white/[0.04] px-3 text-xs font-black text-zinc-300 transition hover:border-white/25 hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
@@ -1124,12 +1121,12 @@ export default function VideoSnapshotPicker({
                   </button>
 
                   {allowFrameEdit && <button type="button"
-                    disabled={!ready || seeking || capturing}
+                    disabled={!ready || seeking || capturing || inserting}
                     onClick={() => void openFrameEdit()}
                     className="min-h-11 rounded-md border border-white/20 px-3 text-xs font-black">Edit Frame</button>}
                   <button
                     type="button"
-                    disabled={!ready || seeking || capturing}
+                    disabled={!ready || seeking || capturing || inserting}
                     onClick={() => void useSnapshot()}
                     className="min-h-9 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-4 text-xs font-black text-cyan-100 transition hover:border-cyan-200/55 hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-35"
                   >

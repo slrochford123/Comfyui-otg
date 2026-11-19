@@ -1,4 +1,5 @@
 "use client";
+import React from "react";
 import {useState} from "react";
 import {useH3NsfwAccess} from "@/lib/client/useH3NsfwAccess";
 export default function H3NsfwAccessRequest(){

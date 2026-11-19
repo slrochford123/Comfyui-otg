@@ -1,4 +1,5 @@
 "use client";
+import React from "react";
 /* eslint-disable @next/next/no-img-element */
 import { useEffect, useRef, useState } from "react";
 import { videoDurationLabel, type VideoSourceChoice, type VideoSourceInfo } from "@/lib/videoCharacters/videoSourceContract";

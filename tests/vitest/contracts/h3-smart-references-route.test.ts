@@ -12,7 +12,7 @@ vi.mock("@/lib/h3StagedUploads", () => ({readCompletedH3StagedUpload: m.staged})
 vi.mock("@/lib/h3DirectJobs", () => ({createH3DirectJob: m.create, startH3DirectJob: m.start, validateH3DirectInput: (input: unknown) => input, h3DirectPublicStatus: (job: unknown) => job,
  cancelH3DirectJob: vi.fn(), ensureH3DirectJobRunner: vi.fn(), getH3DirectJob: vi.fn(), getLatestH3DirectJob: vi.fn(), recoverH3DirectBeforeRetry: vi.fn()}));
 import { POST } from "@/app/api/h3/generation/route";
-const post = (patch = {}) => POST(new NextRequest("http://test/api/h3/generation", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({config: {mode: "h3-reference-to-video", quality: "sh", orientation: "landscape", durationSeconds: 5, prompt: '  The girl lifts the cat. She says "Hello".  ', smartReferences: {useFirstFrame: true, refMods: [{name: "cat", sourceKind: "image"}]}}, staged: {firstImage: {id: "opening"}, referenceImages: [{id: "girl"}]}, ...patch})}));
+const post = (patch = {}) => POST(new NextRequest("http://test/api/h3/generation", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({config: {mode: "h3-reference-to-video", quality: "sh", orientation: "landscape", durationSeconds: 5, experimentalAudioReferences:true, prompt: '  The girl lifts the cat. She says "Hello".  ', smartReferences: {useFirstFrame: true, refMods: [{name: "cat", sourceKind: "image"}]}}, staged: {firstImage: {id: "opening"}, referenceImages: [{id: "girl"}]}, ...patch})}));
 beforeEach(async () => {
  vi.clearAllMocks(); await fs.mkdir(m.root, {recursive: true});
  await sharp({create: {width: 32, height: 32, channels: 3, background: "red"}}).png().toFile(path.join(m.root, "opening.png"));

@@ -1,3 +1,4 @@
+import React from "react";
 import {characterDevelopmentEnabled} from "@/lib/h3CharacterDevelopmentAvailability";
 import { testRelayFinishing } from "@/lib/videoFinishing/relay";
 import { cookies } from "next/headers";

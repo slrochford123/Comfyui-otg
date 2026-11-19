@@ -1,4 +1,5 @@
 "use client";
+import React from "react";
 import { useEffect, useRef, useState } from "react";
 import { canvas, H3_LICENSE_URL, H3_LICENSE_NOTICE, type Experiment, type LabKind } from "@/lib/experiments/catalog";
 import type { LabAsset, LabSession } from "@/lib/experiments/store";

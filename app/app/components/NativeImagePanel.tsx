@@ -73,7 +73,7 @@ export default function NativeImagePanel({h3Only = false, sourcePath, sourceUrl,
     if (storageKey) {try {localStorage.setItem(storageKey, jobId);} catch {}}
     void (adapter?adapter.resume(jobId,abort.signal,setStatus):waitForNativeImage(jobId, {signal: abort.signal, onStatus: setStatus})).then(output => {
       if(abort.signal.aborted)return;
-      setResult(output);setBusy(false);setGallerySaved("nsfw" in output);setJobId("");if(storageKey)localStorage.removeItem(storageKey);if(!("nsfw" in output))complete.current?.(output);
+      setResult(output);setBusy(false);setGallerySaved("nsfw" in output);if(adapter){setJobId("");if(storageKey)localStorage.removeItem(storageKey);}if(!("nsfw" in output))complete.current?.(output);
     }).catch(e => {if (e.name !== "AbortError") {setError(e.message);if(adapter&&e.terminal){setJobId("");if(storageKey)localStorage.removeItem(storageKey);}}}).finally(() => {if (!abort.signal.aborted) setBusy(false);});
     return () => abort.abort();
   }, [jobId, storageKey, resumeVersion,adapter]);
@@ -148,8 +148,8 @@ export default function NativeImagePanel({h3Only = false, sourcePath, sourceUrl,
       <button type="submit" disabled={!!unavailableReason || busy || (!!adapter&&!!jobId) || !prompt.trim() || (!h3Only && !file && !sourcePath && !sourceUrl)} className="min-h-11 rounded-lg bg-violet-500 px-5 font-bold disabled:opacity-50">{busy ? "Working…" : h3Only ? "Create image" : "Apply edit"}</button>
     </form>
     {status && busy ? <p role="status">{status} · job {jobId || "preparing"}</p> : null}
-    {jobId&&!busy&&<button type="button" className="min-h-11 rounded-lg border border-white/20 px-4" onClick={()=>setResumeVersion(n=>n+1)}>Check existing image job</button>}
-    {jobId ? <button type="button" onClick={() => void cancel()} className="min-h-11 rounded-lg border border-white/20 px-4">Cancel this image job</button> : null}
+    {jobId&&!busy&&!result&&<button type="button" className="min-h-11 rounded-lg border border-white/20 px-4" onClick={()=>setResumeVersion(n=>n+1)}>Check existing image job</button>}
+    {jobId&&!result ? <button type="button" onClick={() => void cancel()} className="min-h-11 rounded-lg border border-white/20 px-4">Cancel this image job</button> : null}
     {error ? <p role="alert" className="text-red-300">{error}</p> : null}
     {!result && <ImageDownloadButton />}
     {result ? <div className="space-y-2"><ExpandableImage url={result.imageUrl} name="Generated image result" className="w-full" imageClassName="max-h-[65vh] w-full rounded-lg object-contain" /><div className="flex flex-wrap gap-2"><ImageDownloadButton url={result.imageUrl} filename={`${(adapter?.label || NATIVE_IMAGE_MODELS[result.model as NativeImageModel]?.label || result.model)}.png`} /><button type="button" onClick={() => void saveGallery()} disabled={saving || gallerySaved} className="min-h-11 rounded-lg border border-white/20 px-4 disabled:opacity-50">{gallerySaved ? (adapter?"Saved to NSFW Gallery":"Saved to Gallery") : saving ? "Saving…" : "Save to Gallery"}</button></div><p className="text-xs text-white/60">{result.width} × {result.height} · Seed {result.seed}. Saved as a separate owner-scoped image.</p></div> : null}

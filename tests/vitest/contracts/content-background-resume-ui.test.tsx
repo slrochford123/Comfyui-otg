@@ -8,7 +8,7 @@ const m=vi.hoisted(()=>({resume:undefined as undefined|(()=>void|Promise<void>),
 vi.mock("@/lib/client/useH3Resume",()=>({useH3Resume:(callback:()=>void|Promise<void>)=>{m.resume=callback;}}));
 vi.mock("@/app/app/components/ExpandedMediaViewer",()=>({ExpandableVideo:({url}:{url:string})=><video aria-label="Finished video" src={url}/>,ExpandableImage:({url}:{url:string})=><img alt="Finished image" src={url}/>}));
 const complete={id:"h3-direct-finished",status:"completed",statusMessage:"Video complete and saved to Gallery",galleryStatus:"saved",videoUrl:"/api/h3/generation/media?jobId=h3-direct-finished",durationSeconds:5};
-beforeEach(()=>{localStorage.clear();m.fetch.mockReset();m.resume=undefined;vi.stubGlobal("fetch",m.fetch);});
+beforeEach(()=>{localStorage.clear();m.fetch.mockReset();m.resume=undefined;vi.stubGlobal("fetch", ((url:RequestInfo|URL,options?:RequestInit)=>String(url).includes("/analyze-clip")?Promise.resolve(new Response(null,{status:404})):String(url).includes("/h3-support")?Promise.resolve(Response.json({create:false})):m.fetch(url,options)) as typeof fetch);});
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 describe("returning to creation screens without a duplicate submission",()=>{
  it("restores the completed Edit Video after the browser was closed",async()=>{

@@ -1,4 +1,5 @@
 "use client";
+import React from "react";
 export default function H3ClipLengthControl({value,onChange,disabled=false,extended=false,buttonClass="min-h-11 rounded-xl border border-white/20 px-3 py-2",activeClass="bg-violet-600/50"}:{value:number;onChange:(value:5|10|number)=>void;disabled?:boolean;extended?:boolean;buttonClass?:string;activeClass?:string}) {
  return <div className="space-y-2"><p className="text-sm font-semibold">Duration</p><div className="grid grid-cols-2 gap-2" role="group" aria-label="H3 duration">{([5,10] as const).map(seconds=><button type="button" key={seconds} disabled={disabled} className={buttonClass+" "+(seconds===value?activeClass:"")} aria-pressed={seconds===value} onClick={()=>onChange(seconds)}>{seconds} sec</button>)}</div>{extended&&<details><summary className="cursor-pointer py-2 text-sm">Other duration · {value} seconds</summary><label className="block text-sm">Duration · {value} seconds<input aria-label="Duration in seconds" type="range" min={2} max={15} step={1} value={value} disabled={disabled} className="min-h-11 w-full accent-violet-500" onChange={e=>onChange(Number(e.target.value))}/></label></details>}</div>;
 }

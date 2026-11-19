@@ -46,9 +46,9 @@ describe("H3 background, completion, return and Create Video", () => {
     });
     vi.stubGlobal("fetch", server);
     render(<H3Panel authenticatedOwnerKey="qa" />);
-    fireEvent.click(screen.getByRole("button", {name: "Manual Mode"}));
-    const legacy = within(document.querySelector('[data-otg="h3-legacy-manual-tools"]') as HTMLElement);
-    fireEvent.click(legacy.getByRole("tab", {name: /Reference/}));
+
+    const legacy = screen;
+    fireEvent.click(legacy.getByRole("button", {name: "Reference",exact:true}));
     fireEvent.change(legacy.getByPlaceholderText("Describe the scene, action, camera, dialogue, and sound."), {target: {value: "Two friends meet at a café."}});
     fireEvent.change(legacy.getByLabelText("Add reference image"), {target: {files: [new File(["reference"], "woman.png", {type: "image/png"})]}});
     await waitFor(() => expect(legacy.getByRole("button", {name: "Generate Video"})).toBeEnabled());
