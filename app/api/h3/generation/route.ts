@@ -1,4 +1,8 @@
+import {h3ContinuationEnabled} from "@/lib/h3ContinuationAvailability";
+import { bindH3CardImages, h3DeckVoicePlan } from "@/lib/h3CardReferencesServer";
+import { validateH3DirectedPrompt } from "@/lib/openai/h3SceneDirection";
 import { makeH3SmartReferenceInput } from "@/lib/h3SmartReferencesServer";
+import { h3CharacterVoiceBindings } from "@/lib/h3SmartReferences";
 import crypto from "node:crypto";
 import {recoverableH3Submission} from "@/lib/h3SubmissionRecovery";
 import { requestedH3MediaGpu } from "@/lib/mediaGpuRoutingServer";
@@ -41,6 +45,7 @@ type OwnerContext = Awaited<ReturnType<typeof getOwnerContext>>;
 type SavedH3Media = {
   path: string;
   name: string;
+  originalSha256?: string;
 };
 type H3GenerationMedia = {
   firstFiles: H3DirectReference[];
@@ -132,7 +137,7 @@ async function saveMediaBytes(
   } else {
     await fsp.writeFile(target, bytes);
   }
-  return { path: target, name: path.basename(source.name) };
+  return { path: target, name: path.basename(source.name), ...(category === "image" ? { originalSha256: crypto.createHash("sha256").update(bytes).digest("hex") } : {}) };
 }
 
 async function saveFile(ownerKey: string, requestId: string, file: File, category: H3InputMediaKind, index: number) {
@@ -279,7 +284,9 @@ function readH3GenerationConfig(
 
   const rawPrompt = String(config.prompt || "").trim();
   const stylePreset = resolveH3StylePreset(config.stylePresetId);
-  const finalPrompt = composeH3StylePrompt(rawPrompt, stylePreset);
+  const promptFormat = config.promptFormat === "minimax-official-v1"
+    ? "minimax-official-v1" as const : undefined;
+  const finalPrompt = promptFormat ? rawPrompt : composeH3StylePrompt(rawPrompt, stylePreset);
 
   return {
     mode,
@@ -287,14 +294,17 @@ function readH3GenerationConfig(
     orientation,
     durationSeconds,
     finalPrompt,
+    promptFormat,
     h3Settings: config.h3Settings,
     rifeInterpolation60Fps: config.rifeInterpolation60Fps === true,
+    upscale1080p: typeof config.upscale1080p === "boolean" ? config.upscale1080p : undefined,
     seed: Number.isSafeInteger(Number(config.seed)) && Number(config.seed) >= 0 ? Number(config.seed) : crypto.randomBytes(6).readUIntBE(0, 6),
     optionalLoras: Array.isArray(config.optionalLoras) ? config.optionalLoras as any : [],
   };
 }
 
 async function startGenerationJob(
+  request: NextRequest,
   ownerKey: string,
   owner: OwnerContext,
   config: Record<string, unknown>,
@@ -309,24 +319,89 @@ async function startGenerationJob(
     throw new Error("Auto/Manual plans require the exact media review and consent in H3 Studio. Submit through its reviewed generation action.");
   }
 
-  const targetBackend = await (await import("@/lib/h3SmartReferencesServer")).characterRefSelectionBackend(config.smartReferences,await requestedH3MediaGpu(config.targetBackend),ownerKey);
-  if (config.smartReferences && generation.mode !== "h3-reference-to-video") throw Error("Smart References is only available in Reference mode here.");
-  const smartReferences = await makeH3SmartReferenceInput(config.smartReferences, targetBackend || "rtx3090", media.images, media.firstFiles[0] || null, media.videos.length, media.audios.length, {videos: media.videos, audios: media.audios},ownerKey);
+  const nativeAudio = config.experimentalAudioReferences !== true;
+  if (nativeAudio && (media.audios.length || media.videos.some(video => video.includeAudio))) {
+    throw Error("Enable imported audio in Advanced to use audio references.");
+  }
+  const { characterRefSelectionBackend, inspectH3SmartReferences } = await import("@/lib/h3SmartReferencesServer");
+  const requestedBackend = await requestedH3MediaGpu(config.targetBackend);
+  await bindH3CardImages(request,ownerKey,media.images,config.characterImageRefs);
+  let smartSelection = config.smartReferences ?? (config.characterImageRefs !== undefined ? {useFirstFrame:false,refMods:[]} : undefined);
+  if (nativeAudio) {
+    const { normalizeH3SmartReferenceSelection } = await import("@/lib/h3SmartReferences");
+    const selection = normalizeH3SmartReferenceSelection(smartSelection);
+    if (selection?.refMods.length) {
+      const target = await characterRefSelectionBackend(selection, requestedBackend, ownerKey).then(value => value || "rtx3090" as const).catch(() => undefined);
+      const inventory = target && await inspectH3SmartReferences(target, true).catch(() => null);
+      const canVerify = inventory && inventory.refModVisualSelection === true && selection.refMods.every(
+        slot => inventory.refMods.some(item => item.name === slot.name && item.kind !== "audio"),
+      );
+      if (!canVerify && !media.images.length && !media.firstFiles.length) {
+        throw Error("This worker cannot verify visual-only RefMods. Choose an approved Character Card image.");
+      }
+      smartSelection = {...selection, refMods: canVerify ? selection.refMods.filter(slot => slot.components !== "Audio").map(
+        slot => ({...slot, components: "Visual", audioStrength: 0}),
+      ) : []};
+    }
+  }
+  const targetBackend = await characterRefSelectionBackend(smartSelection, requestedBackend, ownerKey);
+  if (smartSelection && generation.mode !== "h3-reference-to-video") throw Error("Smart References is only available in Reference mode here.");
+  const smartReferences = await makeH3SmartReferenceInput(smartSelection, targetBackend || "rtx3090", media.images, media.firstFiles[0] || null, media.videos.length, media.audios.length, {videos: media.videos, audios: media.audios},ownerKey);
   if (smartReferences) smartReferences.originalPrompt = String(config.prompt || "");
   if (smartReferences?.useFirstFrame && media.firstFiles.length !== 1) throw Error("Choose exactly one opening image.");
+  const directorConversationId = config.directorConversationId;
+  const conversation = h3ContinuationEnabled() && typeof directorConversationId === "string" && /^[a-f0-9-]{36}$/.test(directorConversationId)
+    ? (await import("@/lib/openai/h3DirectorStore")).getH3DirectorConversation(ownerKey, directorConversationId)
+    : null;
+  const matchingDirection = conversation?.promptVersions.at(-1)?.prompt === String(config.prompt || "").trim();
+  const review = h3ContinuationEnabled() && generation.mode === "h3-reference-to-video" && config.continuation
+    ? await (await import("@/lib/h3Continuation")).loadH3Continuation(await requireSessionUser(request), config.continuation)
+    : null;
+  if (generation.promptFormat) {
+    const referenceCounts = smartReferences?.referenceMap.reduce(
+      (counts, reference) => {
+        if (reference.tag.startsWith("<Picture ")) counts.pictures++;
+        if (reference.tag.startsWith("<Video ")) counts.videos++;
+        if (reference.tag.startsWith("<Audio ")) counts.audios++;
+        return counts;
+      },
+      { pictures: 0, videos: 0, audios: 0 },
+    );
+    validateH3DirectedPrompt(generation.finalPrompt, {
+      mode: generation.mode,
+      durationSeconds: generation.durationSeconds,
+      firstImage: generation.mode === "h3-reference-to-video"
+        ? Boolean(smartReferences?.firstFrame) : media.firstFiles.length === 1,
+      lastImage: generation.mode === "h3-image-to-video" && media.lastFiles.length === 1,
+      pictures: referenceCounts?.pictures ?? media.images.length,
+      videos: referenceCounts?.videos ?? media.videos.length,
+      audios: referenceCounts?.audios ?? media.audios.length + media.videos.filter(video => video.includeAudio).length,
+      ...(smartReferences ? { characterVoiceBindings: h3CharacterVoiceBindings(smartReferences.referenceMap) } : {}),
+    });
+  }
   const input = validateH3DirectInput({
     smartReferences,
+    ...(h3ContinuationEnabled() ? { directorContext: {
+      stylePresetId: resolveH3StylePreset(config.stylePresetId)?.id || "none",
+      conversationId: matchingDirection ? conversation?.id : undefined,
+      synopsis: matchingDirection ? conversation?.turns.filter(turn => turn.role === "assistant").at(-1)?.content : undefined,
+    }} : {}),
+    ...(review ? { continuation: {workspaceId: review.workspaceId, reviewId: review.id, sourceJobId: review.source.jobId, sourceSha256: review.sourceSha256} } : {}),
+    correctionCast: await h3DeckVoicePlan(request,ownerKey,smartReferences,generation.finalPrompt,generation.durationSeconds),
+    ...(nativeAudio ? { nativeAudio: true as const } : {}),
     targetBackend,
     mode: generation.mode,
     quality: generation.quality,
     orientation: generation.orientation,
     durationSeconds: generation.durationSeconds,
     prompt: generation.finalPrompt,
+    promptFormat: generation.promptFormat,
     h3Settings: normalizeH3AdvancedSettings(
       generation.h3Settings,
       media.images.length,
     ),
     rifeInterpolation60Fps: generation.rifeInterpolation60Fps,
+    upscale1080p: generation.upscale1080p,
     seed: generation.seed,
     optionalLoras: generation.optionalLoras,
     firstImage: media.firstFiles[0] || null,
@@ -334,8 +409,8 @@ async function startGenerationJob(
     images: media.images,
     videos: media.videos,
     audios: media.audios,
-  });
-  const job = await createH3DirectJob(ownerKey, input, owner);
+  },ownerKey);
+  const job = await createH3DirectJob(ownerKey, input, owner, true);
   startH3DirectJob(job);
   return noStore({ ok: true, job: h3DirectPublicStatus(job) }, { status: 202 });
 }
@@ -441,7 +516,7 @@ async function postGeneration(req: NextRequest) {
         if (["submitting", "unknown"].includes(source.studioSubmissionState || "") || !["failed", "canceled", "completed"].includes(source.status)) {
           throw new Error("The original generation is active or its backend acceptance is unresolved. Refresh that job; do not submit a duplicate.");
         }
-        if (source.input.studioPlan) throw new Error("Preview a fresh Auto/Manual plan using the retained references, then confirm a new generation. Unresolved backend submissions cannot be retried automatically.");
+        if (source.input.studioPlan && !source.relaySourcePath) throw new Error("Preview a fresh Auto/Manual plan using the retained references, then confirm a new generation.");
         const recovered = await recoverH3DirectBeforeRetry(source);
         if (recovered) {
           ensureH3DirectJobRunner(recovered);
@@ -453,7 +528,7 @@ async function postGeneration(req: NextRequest) {
           seed: freshH3RetrySeed(source.input.seed),
         };
         if (retryInput.studioPlan) retryInput.studioPlan = { ...retryInput.studioPlan, seed: retryInput.seed };
-        const retry = await createH3DirectJob(ownerKey, retryInput, source.galleryOwner || owner);
+        const retry = await createH3DirectJob(ownerKey, retryInput, source.galleryOwner || owner, source.finishDelivery);
         startH3DirectJob(retry);
         return noStore({ ok: true, job: h3DirectPublicStatus(retry) }, { status: 202 });
       }
@@ -467,6 +542,7 @@ async function postGeneration(req: NextRequest) {
           body.staged || {},
         );
         return await startGenerationJob(
+          req,
           ownerKey,
           owner,
           config,
@@ -485,6 +561,7 @@ async function postGeneration(req: NextRequest) {
       config,
     );
     return await startGenerationJob(
+          req,
       ownerKey,
       owner,
       config,

@@ -9,7 +9,10 @@ import {
 } from "@/lib/workers/comfySubmissionCriticalSection";
 import { releaseIdle3090Peer } from "@/lib/workers/comfy3090Peer";
 import { acquireVoiceGpuFileLease } from "@/lib/workers/voiceGpuFileLease";
-import { mediaQueueEnabled, enqueueComfyMedia, assertComfyMediaDispatch } from "./mediaGpuQueue";
+import { mediaQueueEnabled, enqueueComfyMedia, assertComfyMediaDispatch, requireH3QualificationSharedQueue } from "./mediaGpuQueue";
+import type { H3StudioLeasedSubmission } from "@/lib/h3StudioQualification";
+import type { H3PromptGraph } from "@/lib/production/h3Workflows";
+import { verifyH3QualificationBridgeRoute, type H3QualificationBridgeRoute } from "@/lib/h3QualificationBridgeRoute";
 
 
 export class Comfy5060BusyError extends Error {
@@ -58,20 +61,29 @@ export async function submitComfyPromptWithGpuLease(args: {
   purpose?: "image" | "video" | "ltx-fallback";
   preSubmitCleanup?: "free" | null;
   releaseIdlePeer?: boolean;
-  /** Server-owned final admission hook, inside the physical submission mutex. */
+  /** Producer bookkeeping. With the durable queue this runs before enqueue. */
   beforeSubmit?: () => Promise<void>;
+  /** Server-local authorization, checked under the physical mutex by the dispatcher. */
+  qualification?: H3StudioLeasedSubmission;
+  characterVoicesBridgeRoute?: H3QualificationBridgeRoute;
+  /** Durable dispatcher observes the moment transport can first become uncertain. */
+  onPostAttempt?: () => void;
   mediaQueueProducer?: import("./mediaGpuQueue").ComfyMediaPayload["producer"];
     submitTimeoutMs?: number;
     onPromptAccepted?: (
       promptId: string,
     ) => Promise<void> | void;
 }): Promise<Response> {
+  if (args.qualification && (args.releaseIdlePeer !== false || args.preSubmitCleanup || resolveComfyPhysicalGpu(args.baseUrl) !== "shawn-3090")) throw Error("Qualification requires the RTX 3090 lease with peer release and cleanup off.");
+  if (args.qualification) requireH3QualificationSharedQueue(args.characterVoicesBridgeRoute);
+  const dispatch = { ...args, body: args.init.body };
   if (mediaQueueEnabled() && args.queueDispatch) {
-    assertComfyMediaDispatch({ownerId:args.ownerId,baseUrl:args.baseUrl,workerId:args.workerId,body:args.init.body});
+    assertComfyMediaDispatch(dispatch);
     // The durable queue and the worker's ingress gate already fence this
     // device. Never fall into either rendering card's legacy submit mutex.
     if(resolveComfyPhysicalGpu(args.baseUrl)==="shawn-3060"){
       await args.beforeSubmit?.();
+      args.onPostAttempt?.();
       return (args.fetcher||fetch)(normalizeBaseUrl(args.baseUrl)+"/prompt",{...args.init,redirect:"error",signal:AbortSignal.timeout(args.submitTimeoutMs||60000)});
     }
   }
@@ -96,7 +108,8 @@ export async function submitComfyPromptWithGpuLease(args: {
     if (!body?.prompt || typeof body.prompt !== "object" || Array.isArray(body.prompt)) throw new Error("A valid ComfyUI graph is required.");
     await args.beforeSubmit?.();
     return enqueueComfyMedia({baseUrl:args.baseUrl,body,workerId:args.workerId,
-      preSubmitCleanup:args.preSubmitCleanup,releaseIdlePeer:args.releaseIdlePeer,producer:args.mediaQueueProducer},args.onPromptAccepted);
+      preSubmitCleanup:args.preSubmitCleanup,releaseIdlePeer:args.releaseIdlePeer,producer:args.mediaQueueProducer,
+      qualification:args.qualification,characterVoicesBridgeRoute:args.characterVoicesBridgeRoute},args.onPromptAccepted);
   }
   // OTG_COMFY_PROMPT_QUEUE_ONLY_V1
   //
@@ -170,7 +183,7 @@ export async function submitComfyPromptWithGpuLease(args: {
         // The submission mutex can wait. Recheck the persisted claim before
         // any /free or /prompt operation after that wait.
         if (mediaQueueEnabled() && args.queueDispatch) {
-          assertComfyMediaDispatch({ownerId:args.ownerId,baseUrl:args.baseUrl,workerId:args.workerId,body:args.init.body});
+          assertComfyMediaDispatch(dispatch);
         }
         let releaseVoice:(()=>void)|null=null;
         if(on3090){
@@ -315,6 +328,14 @@ export async function submitComfyPromptWithGpuLease(args: {
 
 
           await args.beforeSubmit?.();
+          if (args.characterVoicesBridgeRoute && !args.qualification) await verifyH3QualificationBridgeRoute(args.characterVoicesBridgeRoute);
+          if (args.qualification) {
+            if (typeof args.init.body !== "string") throw Error("Qualification requires the exact serialized Comfy payload.");
+            const { runH3StudioLeasedSubmission } = await import("@/lib/h3StudioQualification");
+            const outgoing = JSON.parse(args.init.body) as { prompt: H3PromptGraph };
+            await runH3StudioLeasedSubmission(args.qualification, outgoing.prompt);
+            assertComfyMediaDispatch(dispatch);
+          }
           const submitTimeoutMs =
             args.submitTimeoutMs == null
               ? (
@@ -358,11 +379,13 @@ export async function submitComfyPromptWithGpuLease(args: {
             Response;
 
           try {
+            args.onPostAttempt?.();
             response =
               await submit(
                 `${baseUrl}/prompt`,
                 {
                   ...args.init,
+                  ...(args.qualification ? { redirect: "error" as const } : {}),
 
                   /*
                    * Reset a caller timeout that may have expired

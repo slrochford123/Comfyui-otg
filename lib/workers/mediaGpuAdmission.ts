@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {spawn} from "node:child_process";
+import Database from "better-sqlite3";
 import {GPU_UUIDS,type PhysicalMediaGpu as MediaGpu} from "@/lib/mediaGpuRouting";
 
 export function localGpuEnvironment() {
@@ -89,4 +90,15 @@ export async function cancelSharedMediaTicket(gpu:MediaGpu,owner:string,ticket:n
 export async function assertSharedMediaGpuOwned(gpu:MediaGpu,owner:string,token?:number) {
   const result=await request({action:"status",gpu,owner,...(token!=null?{token}:{})});
   if(!result || (token!=null&&result.fenced!==true) || result.busy!==true || result.owned!==true)throw Error("The shared audio GPU reservation is no longer confirmed; no cache or model was changed.");
+}
+
+/** Protocol 2 acquires and releases the grant. Its status response omits the token. */
+export function assertH3QualificationSharedGrant(ledgerPath: string, owner: string, ticket: number, token: number) {
+  const ledger = new Database(ledgerPath, { readonly: true, fileMustExist: true, timeout: 1_000 });
+  try {
+    const current = ledger.prepare(`SELECT 1 FROM grants JOIN tickets USING (owner)
+      WHERE grants.gpu='rtx3090' AND grants.owner=? AND grants.token=?
+      AND tickets.sequence=? AND tickets.state='granted' AND tickets.gpu_mask=1`).get(owner, token, ticket);
+    if (!current) throw Error("The exact shared RTX 3090 grant is no longer current.");
+  } finally { ledger.close(); }
 }

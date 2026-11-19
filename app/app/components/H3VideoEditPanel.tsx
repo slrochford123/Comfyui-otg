@@ -1,9 +1,10 @@
 "use client";
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import H3CharacterVoiceCorrection from "./H3CharacterVoiceCorrection";
 import { ExpandableVideo } from "./ExpandedMediaViewer";
 import { newClientRequestId } from "@/lib/client/requestId";
 import { useH3Resume } from "@/lib/client/useH3Resume";
-type Job = { id: string; status: string; statusMessage: string; error?: string; progressPercent?: number; videoUrl?: string; galleryStatus?: string; nativeResolution?: string; durationSeconds?: number; approximatePreview?: { imageUrl: string } };
+type Job = { id: string; finishingRetry?: boolean; status: string; statusMessage: string; error?: string; progressPercent?: number; videoUrl?: string; galleryStatus?: string; nativeResolution?: string; durationSeconds?: number; approximatePreview?: { imageUrl: string } };
 type GalleryVideo = { name: string; url: string; kind?: string; video?: boolean };
 type SourceAsset = { id: string; url: string; duration: number; name: string };
 function previewUrl(value?: string) {
@@ -12,12 +13,14 @@ function previewUrl(value?: string) {
   return /^data:(?:image\/(?:jpeg|png|webp|gif)|video\/(?:mp4|webm));base64,[a-zA-Z0-9+/=\s]+$/.test(value) ? value : undefined;
 }
 export function trimTime(seconds: number) { return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${(seconds % 60).toFixed(2).padStart(5, "0")}`; }
-export default function H3VideoEditPanel({ onBack, backend = "rtx3090", authenticatedOwnerKey = "", studioBusy = false }: { onBack: () => void; backend?: "rtx3090" | "rtx5060ti"; authenticatedOwnerKey?: string; studioBusy?: boolean }) {
+export default function H3VideoEditPanel({ onBack, backend = "rtx3090", authenticatedOwnerKey = "", studioBusy = false }: { onBack?: () => void; backend?: "rtx3090" | "rtx5060ti"; authenticatedOwnerKey?: string; studioBusy?: boolean }) {
   const [quality, setQuality] = useState("0.6");
   const [file, setFile] = useState<File | null>(null);
   const [source, setSource] = useState("");
   const [prompt, setPrompt] = useState("");
   const [duration, setDuration] = useState(0);
+  const [rife, setRife] = useState(false);
+  const [upscale, setUpscale] = useState<boolean>();
   const [error, setError] = useState("");
   const [job, setJob] = useState<Job | null>(null);
   const [pending, setPending] = useState(false);
@@ -154,11 +157,11 @@ export default function H3VideoEditPanel({ onBack, backend = "rtx3090", authenti
     guard.current = true; setPending(true); setError("");
     try {
       let response: Response;
-      if (action === "cancel" || action === "gallery") response = await fetch(action === "gallery" ? "/api/h3/generation/gallery" : "/api/h3/generation", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...(action === "cancel" ? { action } : {}), jobId: job?.id }) });
+      if (action === "cancel" || action === "gallery" || action === "retry" && job?.finishingRetry) response = await fetch(action === "gallery" ? "/api/h3/generation/gallery" : "/api/h3/generation", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...(action !== "gallery" ? { action } : {}), jobId: job?.id }) });
       else {
         if (!selection || !prompt.trim()) throw Error("Choose and prepare a 2–10-second video selection and enter an edit prompt.");
         if (action === "retry" || !requestId.current) requestId.current = newClientRequestId();
-        response = await fetch("/api/h3/video-edit/simple", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceId: selection.id, prompt: prompt.trim(), quality, backend, requestId: requestId.current }) });
+        response = await fetch("/api/h3/video-edit/simple", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceId: selection.id, prompt: prompt.trim(), quality, backend, upscale1080p: upscale ?? quality !== "0.2", rifeInterpolation60Fps: rife, requestId: requestId.current }) });
       }
       const result = await response.json(); if (!response.ok) throw Error(result.error || "H3 edit failed.");
       if (action === "gallery" && !result.job && job) rememberJob((await json(await fetch(`/api/h3/generation?jobId=${encodeURIComponent(job.id)}`, { cache: "no-store" }))).job);
@@ -177,7 +180,7 @@ export default function H3VideoEditPanel({ onBack, backend = "rtx3090", authenti
   }
   const button = "min-h-11 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 disabled:opacity-50";
   return <section className="mx-auto min-w-0 max-w-4xl space-y-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 pb-28 text-[var(--color-text)]" data-otg="h3-video-edit">
-    <button className={button} onClick={onBack} disabled={busy}>Back to H3 Studio</button>
+    {onBack && <button className={button} onClick={onBack} disabled={busy}>Back to H3 Studio</button>}
     <h2 className="text-2xl font-bold">Edit Video</h2>
     <p className="text-sm text-[var(--color-text-muted)]">Choose a 2–10-second portion, describe your edit and create the video. Its duration and orientation follow your clip. The finished edit keeps the audio from your selected clip; silent clips stay silent. Generative editing may reinterpret details.</p>
     <input ref={picker} aria-label="Source video file" hidden type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.mkv,.webm,.m4v" onChange={event => { select(event.target.files?.[0] || null); event.target.value = ""; }} />
@@ -198,13 +201,20 @@ export default function H3VideoEditPanel({ onBack, backend = "rtx3090", authenti
       <div className="flex flex-wrap gap-2"><button className={button} disabled={!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end > duration || end - start < 2 || end - start > 10} onClick={() => void trim()}>Trim Selection</button>{duration <= 10 ? <button className={button} onClick={() => { setStart(0); setEnd(duration); setSelection(asset); }}>Use Full Video</button> : null}</div>
     </fieldset> : null}
     {selection ? <div><h3 className="font-semibold">{selection.id === asset?.id ? "Full video ready" : "Trimmed clip preview"} · {selection.duration.toFixed(2)} sec</h3><video key={selection.id} src={selection.url} controls playsInline className="max-h-80 w-full" /></div> : null}
-    <label className="block">Megapixel size<select aria-label="Megapixel size" disabled={busy} value={quality} onChange={e => setQuality(e.target.value)} className="mt-2 block min-h-11 w-full min-w-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3"><option value="0.2">0.2 MP</option><option value="0.6">0.6 MP</option><option value="1">1 MP</option></select></label>
+    <fieldset disabled={busy} className="flex flex-wrap gap-2">
+      <legend className="mb-2">Megapixel size</legend>
+      {[["0.2","0.2 MP"],["0.6","0.6 MP"],["1","1 MP"]].map(([value,label]) =>
+        <button key={value} type="button" aria-pressed={quality === value} className={`${button} aria-pressed:border-violet-300 aria-pressed:bg-violet-500/25`}
+          onClick={() => setQuality(value)}>{label}</button>)}
+    </fieldset>
+    <label className="flex items-center gap-2"><input type="checkbox" disabled={busy} checked={rife} onChange={e => setRife(e.target.checked)} />60 FPS (RIFE)</label>
+    <label className="flex items-center gap-2"><input type="checkbox" role="switch" disabled={busy} checked={upscale ?? quality !== "0.2"} onChange={e => setUpscale(e.target.checked)} />1080p Upscaler (RelayVSR)</label>
     <label className="block">Edit prompt<textarea aria-label="H3 video edit prompt" rows={4} maxLength={4000} value={prompt} disabled={busy} onChange={event => setPrompt(event.target.value)} className="mt-2 w-full min-w-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3" placeholder="Describe what you want changed in this video." /></label>
     {!authenticatedOwnerKey ? <p>Sign in to create a video.</p> : null}
-    <div className="flex flex-wrap gap-2"><button className={button} disabled={busy || studioBusy || !authenticatedOwnerKey || !selection || !prompt.trim()} onClick={() => void submit()}>Create Video</button>{active ? <button className={button} disabled={pending || job?.status === "canceling"} onClick={() => void submit("cancel")}>{job?.status === "canceling" ? "Cancelling…" : "Safe Cancel"}</button> : null}{job && ["failed", "canceled"].includes(job.status) ? <button className={button} disabled={busy || studioBusy || !selection} onClick={() => void submit("retry")}>Retry</button> : null}</div>
+    <div className="flex flex-wrap gap-2"><button className={button} disabled={busy || studioBusy || !authenticatedOwnerKey || !selection || !prompt.trim()} onClick={() => void submit()}>Create Video</button>{active ? <button className={button} disabled={pending || job?.status === "canceling"} onClick={() => void submit("cancel")}>{job?.status === "canceling" ? "Cancelling…" : "Safe Cancel"}</button> : null}{job && ["failed", "canceled"].includes(job.status) ? <button className={button} disabled={busy || studioBusy || (!selection && !job.finishingRetry)} onClick={() => void submit("retry")}>{job?.finishingRetry ? "Retry finishing" : "Retry"}</button> : null}</div>
     {job ? <div role="status"><p>{job.statusMessage}</p>{active ? <progress aria-label="Generation progress" max="100" value={job.progressPercent || 0} /> : null}{job.error ? <p className="text-[var(--color-error)]">{job.error}</p> : null}</div> : null}
     {active && preview ? <figure>{preview.startsWith("data:video/") ? <video aria-label="Generation preview" src={preview} autoPlay loop muted playsInline controls className="max-h-80 w-full object-contain" /> : <img src={preview} alt="Generation preview" className="max-h-80 w-full object-contain" />}<figcaption className="text-sm">Live preview · final video may differ</figcaption></figure> : null}
-    {job?.status === "completed" && job.videoUrl ? <div className="space-y-3"><ExpandableVideo key={job.id} url={job.videoUrl} className="max-h-96 w-full" /><p>{job.nativeResolution} · {job.durationSeconds?.toFixed(2)} seconds · {job.galleryStatus === "saved" ? "Saved to Gallery" : job.galleryStatus === "failed" ? "Gallery save needs attention" : "Saving to Gallery…"}</p><div className="flex flex-wrap gap-2"><a className={button} href={job.videoUrl + (job.videoUrl.includes("?") ? "&" : "?") + "download=1"} download>Download Video</a>{job.galleryStatus !== "saved" ? <button className={button} disabled={pending} onClick={() => void submit("gallery")}>Save to Gallery</button> : null}</div></div> : null}
+    {job?.status === "completed" && job.videoUrl ? <div className="space-y-3"><ExpandableVideo key={job.id} url={job.videoUrl} className="max-h-96 w-full" /><H3CharacterVoiceCorrection key={job.id} source={{jobId:job.id}} /><p>{job.nativeResolution} · {job.durationSeconds?.toFixed(2)} seconds · {job.galleryStatus === "saved" ? "Saved to Gallery" : job.galleryStatus === "failed" ? "Gallery save needs attention" : "Saving to Gallery…"}</p><div className="flex flex-wrap gap-2"><a className={button} href={job.videoUrl + (job.videoUrl.includes("?") ? "&" : "?") + "download=1"} download>Download Video</a>{job.galleryStatus !== "saved" ? <button className={button} disabled={pending} onClick={() => void submit("gallery")}>Save to Gallery</button> : null}</div></div> : null}
     {gallery ? <div role="dialog" aria-modal="true" aria-label="Choose source video" className="fixed inset-0 z-[10030] overflow-y-auto bg-[var(--color-background)] p-4 pb-28"><button className={button} onClick={() => setGallery(null)}>Close Video Gallery</button><h3 className="my-4 text-xl font-bold">Choose source video</h3><div className="grid min-w-0 grid-cols-2 gap-3">{gallery.map(item => <button key={item.url} className={button + " min-w-0"} onClick={() => void choose(item)}><video src={item.url} preload="metadata" muted playsInline className="w-full" /><span className="break-all text-xs">{item.name}</span></button>)}</div>{!gallery.length ? <p>No saved videos.</p> : null}</div> : null}
   </section>;
 }

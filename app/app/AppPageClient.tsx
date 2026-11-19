@@ -9,10 +9,11 @@ import OpenAIConnectionPanel from "./components/OpenAIConnectionPanel";
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import ExtractCharactersAction from "./components/ExtractCharactersAction";
 import SpinDialNav, { type SpinTabId } from "./components/SpinDialNav";
 import AdminGpuControls from "./components/AdminGpuControls";
 import MediaGpuControl from "./components/MediaGpuControl";
-import ImageEditEngineSelect from "./components/ImageEditEngineSelect";
+import GenerateImageEditModelButtons from "./components/GenerateImageEditModelButtons";
 import OrderedImageInputs from "./components/OrderedImageInputs";
 import GooglePhotosConnectionPanel from "./components/GooglePhotosConnectionPanel";
 import {runNativeImageEdit, waitForNativeImage, saveNativeImageToGallery, type NativeEditEngine, type NativeImageResult} from "@/lib/client/nativeImages";
@@ -223,6 +224,8 @@ type ProgressResponse = {
   percent?: number;
   progressPercent?: number;
   prompt_id?: string | null;
+  finishing?: string;
+  prompt_error?: string | null;
   fileName?: string | null;
   file_name?: string | null;
   nodeName?: string | null;
@@ -378,6 +381,7 @@ const APP_TAB_LABELS: Record<SpinTabId, string> = {
   gethelp: "AI Assistance",
   generate: "Generate",
   h3: "H3",
+  director: "Qwen Director",
   testing: "Testing",
   "h3-admin": "H3 Admin",
   machine: "Story Creator",
@@ -1339,7 +1343,7 @@ async function fetchWorkflowsForApp() {
     .filter((item: WorkflowItem) => item.id && item.label);
 }
 
-export default function AppPageClient({ initialUser = null, experimentalEnabled = false, finalExportStudioEnabled = false, refCardsEnabled = false, nsfwAvailable = false }: { initialUser?: InitialAppUser; experimentalEnabled?: boolean; finalExportStudioEnabled?: boolean; refCardsEnabled?: boolean; nsfwAvailable?: boolean }) {
+export default function AppPageClient({ initialUser = null, experimentalEnabled = false, finalExportStudioEnabled = false, refCardsEnabled = false, characterDevelopmentEnabled = false, nsfwAvailable = false, continuationAvailable = false, relayFinishingAvailable = false }: { initialUser?: InitialAppUser; experimentalEnabled?: boolean; finalExportStudioEnabled?: boolean; refCardsEnabled?: boolean; characterDevelopmentEnabled?: boolean; nsfwAvailable?: boolean; continuationAvailable?: boolean; relayFinishingAvailable?: boolean }) {
   const queryClient = useQueryClient();
 
   const [tab, setTab] = useState<SpinTabId>("generate");
@@ -1379,6 +1383,7 @@ export default function AppPageClient({ initialUser = null, experimentalEnabled 
   const [generateMediaMode, setGenerateMediaMode] = useState<GenerateMediaMode>("image");
   const [imageOperation, setImageOperation] = useState<ImageOperation>("create");
   const [beforeAfterOpen, setBeforeAfterOpen] = useState(false);
+  const [videoUpscale1080p, setVideoUpscale1080p] = useState(true);
   const [videoGenerationType, setVideoGenerationType] = useState<VideoGenerationType>("create");
   const [selectedVideoLoras, setSelectedVideoLoras] = useState<VideoLoraSelectionValue[]>([]);
   const [adminImageLoras, setAdminImageLoras] = useState<ImageLoraCatalogEntry[]>([]);
@@ -1390,7 +1395,7 @@ export default function AppPageClient({ initialUser = null, experimentalEnabled 
   });
   const [editInputCount, setEditInputCount] = useState(1);
   const [editReferenceFiles, setEditReferenceFiles] = useState<File[]>([]);
-  const [imageEditEngine, setImageEditEngine] = useState<NativeEditEngine>("qwen");
+  const [imageEditEngine, setImageEditEngine] = useState<NativeEditEngine>("qwen-edit-2509");
   const [nativeEditJobId, setNativeEditJobId] = useState("");
   const nativeEditAbort = useRef<AbortController | null>(null);
   const nativeEditActive = useRef(false);
@@ -1468,6 +1473,7 @@ export default function AppPageClient({ initialUser = null, experimentalEnabled 
   const [generateBusy, setGenerateBusy] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
   const generateSubmitInFlightRef = useRef(false);
+  const [generateFinishingFailed, setGenerateFinishingFailed] = useState(false);
   const [generateSubmitNotice, setGenerateSubmitNotice] =
     useState<GenerateSubmitNotice>({ state: "idle", message: "" });
   const [progressStatus, setProgressStatus] = useState<"idle" | "running" | "complete" | "error">("idle");
@@ -2198,7 +2204,7 @@ const activeGenerateStylePreset = useMemo(
           setLastFrameFileName(safeName);
           updateLastFrameInputPreview(file);
         } else if (isEditImageWorkflowSelected && uploadedFileRef.current) {
-          const maximum=imageEditEngine==="qwen"?16:4;
+          const maximum=imageEditEngine==="qwen"?16:imageEditEngine==="qwen-edit-2509"?3:4;
           if(1+editReferenceFiles.length>=maximum)throw Error(`This editor accepts at most ${maximum} images.`);
           setEditReferenceFiles(current=>[...current,file]);setEditInputCount(current=>current+1);
         } else {
@@ -2476,8 +2482,11 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   useEffect(() => {
     const persisted = readPersistedState(appStateStorageKey);
     if (persisted) {
+      if(persisted.tab === "director"){
+        const url=new URL(window.location.href);url.searchParams.set("tab","h3");url.searchParams.set("h3view","nsfw");window.history.replaceState(null,"",url);
+      }
       if (persisted.tab && persisted.tab !== "finalexport" && Object.prototype.hasOwnProperty.call(APP_TAB_LABELS, persisted.tab)) {
-        setTab(!PRODUCTION_FEATURE_ENABLED && persisted.tab === "storyboard" ? "generate" : persisted.tab);
+        setTab(persisted.tab === "director" ? "h3" : !PRODUCTION_FEATURE_ENABLED && persisted.tab === "storyboard" ? "generate" : persisted.tab);
       }
       if (
         persisted.assistanceTab === "describe" ||
@@ -2551,6 +2560,10 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     try {
       const url = new URL(window.location.href);
       const rawTabParam = url.searchParams.get("tab");
+      if(rawTabParam === "director"){
+        url.searchParams.set("tab","h3");url.searchParams.set("h3view","nsfw");
+        window.history.replaceState(null,"",url);
+      }
       if (finalExportStudioEnabled && (rawTabParam === "finalexport" || rawTabParam === "final-export-studio")) {
         window.location.replace("/app/final-export-studio");
         return;
@@ -2560,11 +2573,12 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       const tabParam =
         rawTabParam === "assistants" || rawTabParam === "ai-assistance"
           ? "gethelp"
-          : rawTabParam;
+          : rawTabParam === "director" ? "h3" : rawTabParam;
       if (
         tabParam === "gethelp" ||
         tabParam === "generate" ||
         tabParam === "h3" ||
+        tabParam === "director" ||
         tabParam === "testing" ||
         tabParam === "h3-admin" ||
         tabParam === "machine" ||
@@ -2847,7 +2861,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }, [stopMicCapture]);
 
   useEffect(() => {
-    if ((!isAdmin && tab === "voices") || ((tab === "testing" || tab === "h3-admin") && (!isAdmin || !experimentalEnabled))) {
+    if ((!isAdmin && (tab === "voices" || tab === "director")) || ((tab === "testing" || tab === "h3-admin") && (!isAdmin || !experimentalEnabled))) {
       setTab("generate");
     }
   }, [isAdmin, tab, experimentalEnabled]);
@@ -3103,6 +3117,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         currentNodeProgress,
       });
 
+      setGenerateFinishingFailed(data.finishing === "failed");
+      if (data.finishing) setStatusMessage(data.prompt_error || data.finishing);
       if (nextStatus === "error") {
         refreshedCompletePromptRef.current = "";
         setGenerateApproximatePreview(null);
@@ -3767,8 +3783,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   const handleGenerate = useCallback(async () => {
     if (generateSubmitInFlightRef.current || generateBusy || progressStatus === "running") return;
     if (nativeEditJobId) {setStatusMessage("The previous image edit is unresolved. Cancel or reconcile that exact job before resubmitting."); return;}
-    if (isEditImageWorkflowSelected && imageEditEngine !== "qwen" && editInputCount > 4) {
-      setStatusMessage("Fibo accepts up to 4 images total. Remove extra references or choose Qwen; nothing was discarded.");
+    if (isEditImageWorkflowSelected && imageEditEngine !== "qwen" && editInputCount > (imageEditEngine === "qwen-edit-2509" ? 3 : 4)) {
+      setStatusMessage("Remove extra references or choose a model that accepts more images.");
       return;
     }
     if (generateMediaMode === "video" && !videoWorkflowReady) {
@@ -3861,12 +3877,12 @@ ${sceneReferenceCard || ""}`.toLowerCase();
             generatePreviewBinding.current.expectNative(previewToken, job.jobId);
             try { localStorage.setItem(nativePreviewStorageKey, job.jobId); } catch {}
             setNativeEditJobId(job.jobId);
-            setGenerateSubmitNotice({state: "accepted", message: "Fibo edit queued. Your source and prompt were preserved.", promptId: job.promptId});
+            setGenerateSubmitNotice({state: "accepted", message: "Image edit queued.", promptId: job.promptId});
           }});
         setNativeEditJobId("");
         publishNativePreview(output, previewToken);
         setNativeCompletedJobId(output.jobId);
-        try {await saveNativeImageToGallery(output.jobId); setNativeCompletedJobId(""); setStatusMessage("Fibo edit complete and saved as a new Gallery image. Original preserved.");}
+        try {await saveNativeImageToGallery(output.jobId); setNativeCompletedJobId(""); setStatusMessage("Image edit saved as a new Gallery image.");}
         catch (error) {setStatusMessage((error as Error).message);}
         return;
       }
@@ -3906,6 +3922,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       body.set("seed", String(randomSeed()));
       if (generateMediaMode === "video") {
         body.set("requestKind", "video");
+        if (!videoUpscale1080p) body.set("upscale1080p", "false");
         body.set("width", orientation === "portrait" ? "704" : "1280");
         body.set("height", orientation === "portrait" ? "1280" : "704");
         body.set("frameRate", "24");
@@ -4017,6 +4034,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     isAnimateImageWorkflowSelected,
 
     isPromptRelayWorkflowSelected,
+    videoUpscale1080p,
     isEditImageWorkflowSelected,
     isCustomAudioVideoWorkflowSelected,
     isFirstLastImageVideoWorkflowSelected,
@@ -4250,6 +4268,10 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       const body = new FormData();
       body.set("workflowId", nextWorkflowId);
+      if (storedPayload.requestKind === "video" && storedPayload.upscale1080p === false) {
+        body.set("requestKind", "video");
+        body.set("upscale1080p", "false");
+      }
       body.set("prompt", nextPrompt);
       body.set("negativePrompt", nextNegative);
       body.set("orientation", nextOrientation);
@@ -6305,7 +6327,7 @@ async function handleAskAi() {
             "X-OTG-AI-Assistance": "1",
             "X-OTG-AI-Assistance-Profile":
               "story-helper",
-            "X-OTG-AI-Provider":selectedAssistantProvider("story-helper")||"openai",
+            "X-OTG-AI-Provider":(isAdmin && selectedAssistantProvider("story-helper")) || "openai",
             ...(process.env.NEXT_PUBLIC_OTG_OPENAI_CONVERSATION_CREDITS==="1"?{"X-OTG-Stream":"1","Idempotency-Key":userMessage.id}:{}),
           },
           body,
@@ -6323,7 +6345,7 @@ async function handleAskAi() {
             "X-OTG-AI-Assistance": "1",
             "X-OTG-AI-Assistance-Profile":
               "story-helper",
-            "X-OTG-AI-Provider":selectedAssistantProvider("story-helper")||"openai",
+            "X-OTG-AI-Provider":(isAdmin && selectedAssistantProvider("story-helper")) || "openai",
             ...(process.env.NEXT_PUBLIC_OTG_OPENAI_CONVERSATION_CREDITS==="1"?{"X-OTG-Stream":"1","Idempotency-Key":userMessage.id}:{}),
           },
           credentials: "include",
@@ -6433,7 +6455,7 @@ async function handleAskAi() {
         <div className="absolute inset-x-0 top-0 h-[420px] bg-[radial-gradient(circle_at_center,rgba(80,120,255,0.18),rgba(120,60,255,0.10),transparent_62%)]" />
       </div>
 
-        <header ref={sharedHeaderRef} data-otg="shared-app-header" style={{backgroundColor:"var(--color-surface-elevated)",...(tab==="storyboard"?{paddingTop:"max(0.5rem, env(safe-area-inset-top))"}:{})}} className={`${tab==="storyboard"?"relative md:sticky":"sticky"} inset-x-0 top-0 z-50 border-b border-white/10 px-3 py-3 md:px-5`}>
+        <header ref={sharedHeaderRef} data-otg="shared-app-header" style={{backgroundColor:"var(--color-surface-elevated)",...(tab==="storyboard"?{paddingTop:"max(0.5rem, env(safe-area-inset-top))"}:{})}} className={`${tab==="storyboard" || tab==="h3" ? "relative md:sticky" : "sticky"} inset-x-0 top-0 z-50 border-b border-white/10 px-3 py-3 md:px-5`}>
           <div className="mx-auto flex max-w-[1480px] flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
               <div className={`${tab==="storyboard"?"hidden md:block ":""}text-[11px] font-black uppercase tracking-[0.18em] text-white/42`}>SLR Studios OTG</div>
@@ -6475,7 +6497,7 @@ async function handleAskAi() {
             </div>
           </div>
         </header>
-        {["generate","h3","editvideo","voice","characters","backgrounds","assets"].includes(tab) ? <div className="mx-auto max-w-7xl px-4 py-2"><MediaGpuControl /></div> : null}
+        {["generate","h3","editvideo","voice","characters","backgrounds","assets"].includes(tab) ? <div className="mx-auto max-w-7xl px-4 py-2"><MediaGpuControl buttonRouting={tab === "generate"} /></div> : null}
 
 
       <div className={cn(
@@ -6543,7 +6565,7 @@ async function handleAskAi() {
                     <option value="before-after" className="bg-[#0b1020]">Before &amp; After</option>
                   </select>
                   {!beforeAfterOpen ? <p className="text-sm text-white/60">{IMAGE_OPERATION_LABELS[imageOperation]}</p> : null}
-                  {!beforeAfterOpen && imageOperation === "edit" ? <ImageEditEngineSelect value={imageEditEngine} onChange={setImageEditEngine} disabled={generateBusy} referenceCount={editInputCount} /> : null}
+                  {!beforeAfterOpen && imageOperation === "edit" ? <GenerateImageEditModelButtons value={imageEditEngine} onChange={setImageEditEngine} disabled={generateBusy} referenceCount={editInputCount} /> : null}
                 </div>
               ) : (
                 <div className="space-y-5">
@@ -6570,6 +6592,10 @@ async function handleAskAi() {
                     </div>
                   </div>
 
+                  {relayFinishingAvailable && <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" role="switch" checked={videoUpscale1080p} disabled={generateBusy}
+                      onChange={e => setVideoUpscale1080p(e.target.checked)} />1080p Upscaler (RelayVSR)
+                  </label>}
                   <div className={cn(
                     "rounded-[18px] border px-4 py-3 text-sm",
                     videoWorkflowReady
@@ -6584,7 +6610,7 @@ async function handleAskAi() {
                   </div>
                 </div>
               )}
-              {!(generateMediaMode === "image" && beforeAfterOpen) ? <p className="text-sm text-white/72">{isEditImageWorkflowSelected && imageEditEngine !== "qwen" ? `${imageEditEngine === "fibo2-dev" ? "Fibo Dev · 50 steps · CFG 5" : "Fibo Turbo · 4 steps · CFG 1"} · Euler · selected Auto / Manual GPU` : selectedWorkflow.runtime}</p> : null}
+              {!(generateMediaMode === "image" && (beforeAfterOpen || isEditImageWorkflowSelected)) ? <p className="text-sm text-white/72">{selectedWorkflow.runtime}</p> : null}
             </Card>
 
             {generateMediaMode === "image" && beforeAfterOpen ? <BeforeAfterPanel key={authenticatedOwnerKey || "guest"} owner={authenticatedOwnerKey || "guest"} /> : <>
@@ -6624,6 +6650,7 @@ async function handleAskAi() {
                   ))}
                 </div>
                 <SpeechInputButton
+                  endpoint="/api/local-dictation"
                   label="Dictate generation prompt"
                   className="inline-flex h-12 min-w-12 items-center justify-center rounded-full border border-white/10 bg-white/5 px-3 text-xs font-black text-white transition hover:bg-white/10"
                   onStatus={setStatusMessage}
@@ -6837,7 +6864,7 @@ async function handleAskAi() {
                 </div>
                 <p className="text-sm text-white/50">
                   {isEditImageWorkflowSelected
-                    ? imageEditEngine === "qwen" ? "Qwen Image Edit uses model-aligned output: 704 x 1280 portrait or 1280 x 704 landscape." : "Fibo uses 768 × 1344 portrait or 1344 × 768 landscape. Qwen LoRAs are not applied."
+                    ? imageEditEngine === "qwen-edit-2509" ? "Qwen Image Edit 2509 follows the source image’s aspect ratio." : ""
                     : "Images and videos are locked to 720p in portrait or landscape."}
                 </p>
               </Card>
@@ -6859,7 +6886,7 @@ async function handleAskAi() {
             </div>
 
             <div>
-              {isEditImageWorkflowSelected ? <Card title="Input images"><OrderedImageInputs files={uploadedFileRef.current ? [uploadedFileRef.current, ...editReferenceFiles] : []} maximum={imageEditEngine === "qwen" ? 16 : 4} disabled={generateBusy} onGallery={() => {setGenerateGalleryPickerTarget("input");setGenerateGalleryPickerOpen(true);void loadGenerateGalleryItems();}} onChange={files => {
+              {isEditImageWorkflowSelected ? <Card title="Input images"><OrderedImageInputs files={uploadedFileRef.current ? [uploadedFileRef.current, ...editReferenceFiles] : []} maximum={imageEditEngine === "qwen" ? 16 : imageEditEngine === "qwen-edit-2509" ? 3 : 4} disabled={generateBusy} onGallery={() => {setGenerateGalleryPickerTarget("input");setGenerateGalleryPickerOpen(true);void loadGenerateGalleryItems();}} onChange={files => {
                 uploadedFileRef.current = files[0] || null;setUploadedFileName(files[0]?.name || "");updateGenerateInputPreview(files[0] || null);
                 setEditReferenceFiles(files.slice(1));setEditInputCount(Math.max(1,files.length));
                 secondImageFileRef.current=files[1]||null;thirdImageFileRef.current=files[2]||null;
@@ -7153,6 +7180,18 @@ async function handleAskAi() {
               </Card>
 
               <Card title="Preview">
+                {generateFinishingFailed && activePromptId && <button type="button" className="mb-3 min-h-11 rounded-lg border border-white/20 px-3" onClick={async () => {
+                  try {
+                    const response = await fetch("/api/progress", {method:"POST", headers:{"Content-Type":"application/json"},
+                      body:JSON.stringify({action:"retry-finishing",promptId:activePromptId})});
+                    const result = await response.json();
+                    if (!response.ok) throw Error(result.error || "Video finishing retry failed.");
+                    setGenerateFinishingFailed(false);
+                    setProgressStatus("running");
+                    setStatusMessage(result.finishing || "Waiting for RelayVSR.");
+                    void refreshProgress();
+                  } catch (error) {setStatusMessage(error instanceof Error ? error.message : "Video finishing retry failed.");}
+                }}>Retry finishing</button>}
                 <MediaPreviewPanel
                   url={progressStatus === "running" && generateApproximatePreview?.imageUrl
                     ? generateApproximatePreview.imageUrl
@@ -7174,9 +7213,12 @@ async function handleAskAi() {
                       : "Generate content to update this preview."}
                   onRefresh={() => void refreshLatestContent(true)}
                   refreshing={progressStatus === "running"}
+                  imageDownload={generateMediaMode === "image"}
+                  downloadReady={progressStatus !== "running" && !generateBusy && !nativeEditJobId && !generateFinishingFailed}
                   onClear={handleClearLatestPreview}
                   onReset={handleResetGenerateWorkspace}
                 />
+                {characterDevelopmentEnabled && progressStatus === "complete" && latestPreviewKind === "video" && activePromptId && latestPreviewName && <ExtractCharactersAction key={activePromptId} engine="ltx" jobId={activePromptId} fileName={latestPreviewName} />}
               </Card>
             </div>
             </>}
@@ -7377,7 +7419,7 @@ async function handleAskAi() {
 
             {assistanceTab === "ask" ? (
               <Card title="Story Helper">
-                {process.env.NEXT_PUBLIC_OTG_OPENAI_CONVERSATION_CREDITS==="1"&&<AssistantProviderPicker scope="story-helper" />}
+                {process.env.NEXT_PUBLIC_OTG_OPENAI_CONVERSATION_CREDITS==="1"&&isAdmin&&<AssistantProviderPicker scope="story-helper" />}
                 {askPartial&&<p className="my-3 whitespace-pre-wrap text-sm text-white/85">{askPartial}</p>}
                 <p className="text-white/70">
                   Develop stories, characters, scenes,
@@ -7626,6 +7668,7 @@ async function handleAskAi() {
                       />
 
                       <SpeechInputButton
+                  endpoint="/api/local-dictation"
                         label="Dictate Story Helper message"
                         className="inline-flex h-12 min-w-12 items-center justify-center rounded-full border border-white/10 bg-white/5 px-3 text-xs font-black text-white transition hover:bg-white/10"
                         onStatus={setStatusMessage}
@@ -7711,9 +7754,11 @@ async function handleAskAi() {
           <StoryCreatorPanel ownerKey={authenticatedOwnerKey} />
         ) : null}
         {tab === "storyboard" ? <ProductionStudioEntry key={authenticatedOwnerKey || "production-account-unavailable"} ownerKey={authenticatedOwnerKey} legacy={<ProductionV2Panel />} /> : null}
-        {tab === "h3" ? <H3Panel key={authenticatedOwnerKey || "h3-account-unavailable"} authenticatedOwnerKey={authenticatedOwnerKey} nsfwAvailable={nsfwAvailable} /> : null}
+
+        {tab === "h3" ? <H3Panel key={authenticatedOwnerKey || "h3-account-unavailable"} authenticatedOwnerKey={authenticatedOwnerKey} nsfwAvailable={nsfwAvailable} continuationAvailable={continuationAvailable} isAdmin={isAdmin} relayFinishingAvailable={relayFinishingAvailable} /> : null}
         {tab === "characters" ? (
           <CharactersPanel
+            extractionEnabled={isAdmin && characterDevelopmentEnabled}
             refCardsEnabled={refCardsEnabled}
             key={authenticatedOwnerKey || "character-account-unavailable"}
             isAdmin={isAdmin}
@@ -8115,14 +8160,14 @@ async function handleAskAi() {
                   <div className="rounded-[18px] border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100/85">{deleteAccountMessage}</div>
                 ) : null}
               </Card>
-              {nsfwAvailable&&<H3NsfwAccessRequest key={authenticatedOwnerKey}/>}
+              {nsfwAvailable&&!isAdmin&&<H3NsfwAccessRequest key={authenticatedOwnerKey}/>}
               <BuildVersionFooter />
             </div>
           </div>
         ) : null}
       </div>
 
-      <GalleryWorkspace
+      <GalleryWorkspace key={authenticatedOwnerKey||"gallery-account-unavailable"}
         activeTab={tab}
         galleryItems={galleryItems}
         galleryBusy={galleryBusy}

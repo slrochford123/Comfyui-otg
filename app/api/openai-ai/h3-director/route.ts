@@ -1,268 +1,296 @@
 import { after, NextRequest, NextResponse } from "next/server";
+import sharp from "sharp";
 
-import {claimH3DirectorRequest,readH3DirectorRequest,finishH3DirectorRequest} from "@/lib/openai/h3DirectorRequests";
-import { SessionInvalidError } from "@/lib/ownerKey";
-import { requireSessionUser } from "@/lib/sessionUser";
-import {openAIModels} from "@/lib/openai/provider";
-import {createAssistantText,resolveAssistantProvider,withAssistantProvider} from "@/lib/workers/assistantProvider";
+import { validateH3LoraSelections } from "@/lib/h3LoraCatalogServer";
+import { characterRefSelectionBackend, makeH3SmartReferenceInput } from "@/lib/h3SmartReferencesServer";
+import { DEFAULT_H3_STYLE_PRESET_ID, resolveH3StylePreset, resolveH3StylePresetByLabel } from "@/lib/h3StylePresets";
+import { claimH3DirectorRequest, finishH3DirectorRequest, readH3DirectorRequest } from "@/lib/openai/h3DirectorRequests";
+import { getH3DirectorConversation, upsertH3DirectorConversation } from "@/lib/openai/h3DirectorStore";
 import {
-  getH3DirectorConversation,
-  upsertH3DirectorConversation,
-} from "@/lib/openai/h3DirectorStore";
+  compileH3SceneDirection,
+  H3_DIRECTED_PROMPT_FORMAT,
+  h3SceneDirectionInstructions,
+  h3SceneDirectionSchema,
+  validateH3DirectedDialogue,
+  type H3SceneDirectionContext,
+} from "@/lib/openai/h3SceneDirection";
+import { openAIModels } from "@/lib/openai/provider";
+import { SessionInvalidError } from "@/lib/ownerKey";
+import { H3_PRODUCTION_DURATION_OPTIONS, type H3ProductionDuration } from "@/lib/production/h3ProductionRecipes";
+import { requireSessionUser } from "@/lib/sessionUser";
+import { createAssistantText, resolveReviewedAssistantProvider, withAssistantProvider } from "@/lib/workers/assistantProvider";
+import { h3CharacterVoiceBindings, type H3SmartReferenceMapEntry } from "@/lib/h3SmartReferences";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 240;
 
-const MODE_LABELS: Record<string, string> = {
-  "h3-text-to-video": "Text to Video",
-  "h3-image-to-video": "Image to Video",
-  "h3-reference-to-video": "Reference to Video",
-};
+const MAX_VISUAL_INPUTS = 3;
+const MAX_VISUAL_INPUT_LENGTH = 350_000;
+const MAX_REQUEST_LENGTH = 1_200_000;
+const IMAGE_DATA_URL = /^data:image\/jpeg;base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const MODES = ["h3-text-to-video", "h3-image-to-video", "h3-reference-to-video"];
+
+type DirectorBody = Record<string, unknown>;
+type ReferenceBinding = { label: string; name: string; description: string; clipStartSeconds?: number; source?: string }
+  & Partial<Pick<H3SmartReferenceMapEntry, "kind" | "characterKey" | "characterName" | "voiceId">>;
+type VisualInput = { label: string; dataUrl: string };
 
 function jsonError(error: unknown) {
-  const status =
-    error instanceof SessionInvalidError
-      ? 401
-      : typeof error === "object" && error && "status" in error
-        ? Number((error as any).status || 400)
-        : 400;
+  const status = error instanceof SessionInvalidError ? 401
+    : typeof error === "object" && error && "status" in error ? Number(error.status || 400)
+    : 400;
   return NextResponse.json(
-    {
-      ok: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "H3 AI Director request failed.",
-    },
-    {
-      status,
-      headers: {
-        "Cache-Control": "no-store",
-      },
-    },
+    { ok: false, error: error instanceof Error ? error.message : "H3 AI Director request failed." },
+    { status, headers: { "Cache-Control": "no-store" } },
   );
 }
 
-function cleanText(value: unknown, limit = 8000) {
-  return String(value || "")
-    .replace(/\r\n/g, "\n")
-    .trim()
-    .slice(0, limit);
+function cleanText(value: unknown, limit = 4000) {
+  return typeof value === "string" ? value.replace(/\r\n/g, "\n").trim().slice(0, limit) : "";
 }
 
-function referenceSummary(references: unknown) {
-  if (!Array.isArray(references)) return "";
-  return references
-    .slice(0, 8)
-    .map((item: any, index) => {
-      const kind = cleanText(item?.kind, 24) || "reference";
-      const name = cleanText(item?.name, 120);
-      const description = cleanText(item?.description, 240);
-      return `${index + 1}. ${kind}: ${description || name || "unnamed reference"}`;
-    })
-    .join("\n");
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function loraSummary(loras: unknown) {
-  if (!Array.isArray(loras)) return "";
-  return loras
-    .slice(0, 8)
-    .map((item: any, index) => {
-      const label = cleanText(item?.label || item?.id, 120) || "LoRA";
-      const strength = cleanText(item?.strength, 24) || "default";
-      const triggers = Array.isArray(item?.triggerWords)
-        ? item.triggerWords.map((word: unknown) => cleanText(word, 40)).filter(Boolean)
-        : [];
-      return `${index + 1}. ${label}, strength ${strength}${triggers.length ? `, triggers: ${triggers.join(", ")}` : ""}`;
-    })
-    .join("\n");
+async function referenceContext(body: DirectorBody, ownerKey: string) {
+  const mode = body.mode || "h3-text-to-video";
+  if (typeof mode !== "string" || !MODES.includes(mode)) throw new Error("Choose Text, Image, or Reference before directing.");
+  const durationSeconds = Number(body.durationSeconds ?? 5) as H3ProductionDuration;
+  if (!H3_PRODUCTION_DURATION_OPTIONS.includes(durationSeconds)) throw new Error("Choose a 5- or 10-second duration for H3 Direct.");
+  const firstImageName = cleanText(body.firstImageName, 120);
+  const lastImageName = cleanText(body.lastImageName, 120);
+  const context: H3SceneDirectionContext = {
+    mode: mode as H3SceneDirectionContext["mode"], durationSeconds,
+    firstImage: false, lastImage: false, pictures: 0, videos: 0, audios: 0,
+  };
+  const references: ReferenceBinding[] = [];
+  if (mode === "h3-text-to-video") return { context, references };
+
+  if (mode === "h3-image-to-video") {
+    if (!firstImageName) throw new Error("Choose a First Image before directing.");
+    context.firstImage = true;
+    context.lastImage = Boolean(lastImageName);
+    references.push({ label: "First Image", name: firstImageName, description: "Opening composition at 0.00 seconds." });
+    if (lastImageName) references.push({ label: "Last Image", name: lastImageName, description: "Ending composition at the selected clip duration." });
+    return { context, references };
+  }
+
+  const selected = Array.isArray(body.references) ? body.references.filter(isRecord) : [];
+  const pictures = selected.filter(item => item.kind === "image");
+  const videos = selected.filter(item => item.kind === "video");
+  const audios = selected.filter(item => item.kind === "audio");
+  if (pictures.length > 9 || videos.length > 3 || audios.length > 3 || selected.length > 12) {
+    throw new Error("Reduce the number of selected references before directing.");
+  }
+  if (body.smartReferences != null) {
+    const target = body.targetBackend;
+    if (target != null && target !== "auto" && target !== "rtx3090" && target !== "rtx5060ti") {
+      throw new Error("Choose a supported H3 reference GPU.");
+    }
+    const selectedBackend = await characterRefSelectionBackend(body.smartReferences, target === "rtx3090" || target === "rtx5060ti" ? target : undefined, ownerKey);
+    const asset = (item: Record<string, unknown>) => ({ path: "", name: cleanText(item.name, 120), description: cleanText(item.description, 400) });
+    const firstFrame = firstImageName ? { path: "", name: firstImageName, description: "Opening composition at 0.00 seconds." } : null;
+    const videoDetails = videos.map(item => ({ ...asset(item), includeAudio: item.includeAudio === true }));
+    const smart = await makeH3SmartReferenceInput(body.smartReferences, selectedBackend || "rtx3090", pictures.map(asset), firstFrame,
+      videos.length, audios.length, { videos: videoDetails, audios: audios.map(asset) }, ownerKey);
+    if (smart) {
+      context.firstImage = Boolean(smart.firstFrame);
+      context.pictures = smart.referenceMap.filter(item => item.kind === "image").length;
+      context.videos = smart.referenceMap.filter(item => item.kind === "video").length;
+      context.audios = smart.referenceMap.filter(item => item.kind === "audio").length;
+      context.characterVoiceBindings = h3CharacterVoiceBindings(smart.referenceMap);
+      if (smart.firstFrame) references.push({ label: "First Image", name: smart.firstFrame.name, description: smart.firstFrame.description });
+      for (const { tag, name, description, source, kind, characterKey, characterName, voiceId } of smart.referenceMap) {
+        references.push({ label: tag, name, description, source, kind, characterKey, characterName, voiceId });
+      }
+      if (!references.length) throw new Error("Choose at least one reference before directing.");
+      return { context, references };
+    }
+  }
+  if (!pictures.length && !videos.length && !audios.length) throw new Error("Choose at least one reference before directing.");
+  context.pictures = pictures.length;
+  context.videos = videos.length;
+
+  function bind(item: Record<string, unknown>, label: string) {
+    const clipStartSeconds = Number(item.clipStartSeconds ?? 0);
+    references.push({
+      label,
+      name: cleanText(item.name, 120),
+      description: cleanText(item.description, 400),
+      ...(item.kind === "video" && Number.isFinite(clipStartSeconds) && clipStartSeconds >= 0 ? { clipStartSeconds } : {}),
+    });
+  }
+
+  pictures.forEach((item, index) => bind(item, `<Picture ${index + 1}>`));
+  videos.forEach((item, index) => {
+    const label = `<Video ${index + 1}>`;
+    bind(item, label);
+    if (item.includeAudio === true) references.push({ label: `<Audio ${++context.audios}>`, name: "", description: "Selected source sound", source: label });
+  });
+  audios.forEach(item => bind(item, `<Audio ${++context.audios}>`));
+  return { context, references };
 }
 
-function extractJsonObject(text: string) {
-  const clean = text
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/g, "")
-    .trim();
-  const first = clean.indexOf("{");
-  const last = clean.lastIndexOf("}");
-  const candidate =
-    first >= 0 && last > first ? clean.slice(first, last + 1) : clean;
-  return JSON.parse(candidate);
+async function readVisualInputs(value: unknown, references: ReferenceBinding[]) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_VISUAL_INPUTS) throw new Error("H3 Direct accepts up to three selected stills.");
+  const labels = new Set(references.filter(item => !item.label.startsWith("<Audio")).map(item => item.label));
+  return Promise.all(value.map(async (item): Promise<VisualInput> => {
+    if (!isRecord(item) || typeof item.label !== "string" || !labels.has(item.label)
+        || typeof item.dataUrl !== "string" || item.dataUrl.length > MAX_VISUAL_INPUT_LENGTH || !IMAGE_DATA_URL.test(item.dataUrl)) {
+      throw new Error("H3 Direct received an invalid still or reference label.");
+    }
+    const bytes = Buffer.from(item.dataUrl.slice("data:image/jpeg;base64,".length), "base64");
+    const image = await sharp(bytes, { limitInputPixels: 1_048_576 }).metadata().catch(() => null);
+    if (image?.format !== "jpeg" || !image.width || !image.height || image.width > 1024 || image.height > 1024
+        || bytes.at(-2) !== 0xff || bytes.at(-1) !== 0xd9) {
+      throw new Error("H3 Direct received an unreadable or oversized JPEG still.");
+    }
+    return { label: item.label, dataUrl: item.dataUrl };
+  }));
 }
 
-function normalizePrompt(value: unknown) {
-  return cleanText(value, 1400)
-    .replace(/\s+/g, " ")
-    .replace(/^["'`]+|["'`]+$/g, "")
-    .trim();
+function providerInput(text: string, visuals: VisualInput[]) {
+  if (!visuals.length) return [{ role: "user", content: text }];
+  return [{ role: "user", content: [
+    { type: "input_text", text },
+    ...visuals.flatMap(({ label, dataUrl }) => [
+      { type: "input_text", text: `Selected visual evidence for ${label}:` },
+      { type: "input_image", image_url: dataUrl, detail: "low" },
+    ]),
+  ] }];
+}
+
+function directorStyle(body: DirectorBody) {
+  const requested = cleanText(body.stylePresetId, 120);
+  const preset = requested && requested !== DEFAULT_H3_STYLE_PRESET_ID
+    ? resolveH3StylePreset(requested)
+    : resolveH3StylePresetByLabel(cleanText(body.visualStyle, 120));
+  if (requested && requested !== DEFAULT_H3_STYLE_PRESET_ID && !preset) throw new Error("Choose a valid H3 visual style.");
+  return preset?.id && preset.id !== DEFAULT_H3_STYLE_PRESET_ID ? { label: preset.label, visualTraits: preset.description } : null;
 }
 
 export async function GET(request: NextRequest) {
   try {
-    const user=await requireSessionUser(request);
-    if(!user.accountId)throw new SessionInvalidError("Sign in with an account.");
-    const result=readH3DirectorRequest(user.accountId,request.nextUrl.searchParams.get("requestId")||"");
-    return NextResponse.json(result.body,{status:result.status,headers:{"Cache-Control":"no-store","X-OTG-H3-Request":result.status===202?"pending":"complete"}});
-  }catch(error){return jsonError(error);}
-}
-
-export async function POST(request: NextRequest) {
-  try {
     const user = await requireSessionUser(request);
-    const body = await request.json().catch(() => ({}));
-    const requestKey=request.headers.get("idempotency-key")||undefined;
-    if(request.headers.get("prefer")==="respond-async"){
-      const accountId=user.accountId;
-      if(!accountId)throw new SessionInvalidError("Sign in with an account.");
-      const instruction=cleanText(body?.message||body?.text,4000);
-      if(!requestKey||!instruction)throw new Error("A request ID and H3 Director instruction are required.");
-      const {accepted,result}=claimH3DirectorRequest(accountId,requestKey,body,instruction);
-      if(accepted)after(async()=>{
-        const response=await directShot(user,body,requestKey);
-        finishH3DirectorRequest(accountId,requestKey,{status:response.status,body:await response.json()});
-      });
-      return NextResponse.json(result.body,{status:result.status,headers:{"Cache-Control":"no-store","X-OTG-H3-Request":result.status===202?"pending":"complete"}});
-    }
-    return await directShot(user,body,requestKey);
-  }catch(error){return jsonError(error);}
-}
-
-async function directShot(user:Awaited<ReturnType<typeof requireSessionUser>>,body:any,requestKey?:string){
-  try {
-
-    const userText = cleanText(body?.message || body?.text || "", 4000);
-    if (!userText) {
-      throw new Error("Tell the H3 AI Director what to create or refine.");
-    }
-
-    const currentPrompt = cleanText(body?.currentPrompt || "", 4000);
-    const mode = cleanText(body?.mode || "h3-text-to-video", 80);
-    const conversationId = cleanText(body?.conversationId || "", 120);
-    const previous = conversationId
-      ? getH3DirectorConversation(user.ownerKey, conversationId)
-      : null;
-
-    const sceneMemory = previous?.turns
-      .slice(-10)
-      .map((turn) => `${turn.role.toUpperCase()}: ${turn.content}`)
-      .join("\n");
-    const latestPrompt =
-      previous?.promptVersions[previous.promptVersions.length - 1]?.prompt ||
-      currentPrompt;
-
-    const lockedSettings = [
-      `Mode: ${MODE_LABELS[mode] || mode}.`,
-      `Duration: ${cleanText(body?.durationSeconds, 20) || "unchanged"} seconds.`,
-      `Quality: ${cleanText(body?.quality, 20) || "unchanged"}.`,
-      `Orientation: ${cleanText(body?.orientation, 20) || "unchanged"}.`,
-      `Visual style: ${cleanText(body?.visualStyle, 120) || "unchanged"}.`,
-      `Camera feel: ${cleanText(body?.cameraFeel, 120) || "unchanged"}.`,
-      `Shot flow: ${cleanText(body?.shotFlow, 120) || "unchanged"}.`,
-      `References:\n${referenceSummary(body?.references) || "No attached references."}`,
-      `LoRAs:\n${loraSummary(body?.loras) || "No selected LoRAs."}`,
-    ].join("\n");
-
-    const instructions = [
-      "You are the H3 AI Scene Director inside SLR Studios.",
-      "Turn natural language into one concise MiniMax H3-compatible video prompt.",
-      "Understand follow-up edits by preserving earlier scene instructions unless the user changes them.",
-      "Do not alter locked generation settings, references, seeds, styles, LoRAs, or advanced controls.",
-      "Use concrete cinematic language but avoid long generic padding.",
-      "Return JSON only with keys prompt, reply, changes.",
-      "prompt must be the final editable H3 scene prompt, one compact paragraph.",
-      "reply must briefly explain what changed for the user.",
-      "changes must be a short array of strings.",
-    ].join(" ");
-
-    const input = [
-      {
-        role: "user",
-        content: [
-          "LOCKED SETTINGS AND REFERENCES:",
-          lockedSettings,
-          "",
-          "PREVIOUS DIRECTOR MEMORY:",
-          sceneMemory || "(new conversation)",
-          "",
-          "CURRENT H3 PROMPT:",
-          latestPrompt || "(empty)",
-          "",
-          "USER DIRECTION:",
-          userText,
-        ].join("\n"),
-      },
-    ];
-
-    const result = await withAssistantProvider(resolveAssistantProvider(body.aiProvider),()=>createAssistantText({
-      ownerKey: user.ownerKey,
-      accountId:user.accountId,
-      feature:"h3-director",
-      requestKey,
-      useCase: "h3-director",
-      model: openAIModels().h3,
-      instructions,
-      input,
-      maxOutputTokens: 650,
-      timeoutMs: 90_000,
-    }));
-
-    let parsed: any;
-    try {
-      parsed = extractJsonObject(result.text);
-    } catch {
-      parsed = {
-        prompt: result.text,
-        reply: "I updated the H3 scene prompt.",
-        changes: [],
-      };
-    }
-
-    const prompt = normalizePrompt(parsed?.prompt);
-    if (!prompt) {
-      throw new Error("OpenAI returned an empty H3 prompt.");
-    }
-
-    const reply =
-      cleanText(parsed?.reply, 1000) || "I updated the H3 scene prompt.";
-    const changes = Array.isArray(parsed?.changes)
-      ? parsed.changes
-          .map((item: unknown) => cleanText(item, 160))
-          .filter(Boolean)
-          .slice(0, 6)
-      : [];
-
-    const conversation = upsertH3DirectorConversation({
-      ownerKey: user.ownerKey,
-      conversationId: previous?.id,
-      userText,
-      assistantText: reply,
-      provider:result.provider,
-      model:result.model,
-      prompt,
+    if (!user.accountId) throw new SessionInvalidError("Sign in with an account.");
+    const result = readH3DirectorRequest(user.accountId, request.nextUrl.searchParams.get("requestId") || "");
+    return NextResponse.json(result.body, {
+      status: result.status, headers: { "Cache-Control": "no-store", "X-OTG-H3-Request": result.status === 202 ? "pending" : "complete" },
     });
-
-    return NextResponse.json(
-      {
-        ok: true,
-        prompt,
-        reply,
-        changes,
-        conversationId: conversation.id,
-        promptVersions: conversation.promptVersions,
-        usage: result.usage,
-        model: result.model,
-        provider:result.provider,
-        fallbackReason:result.fallbackReason,
-      },
-      {
-        headers: {
-          "Cache-Control": "no-store",
-        },
-      },
-    );
   } catch (error) {
     return jsonError(error);
   }
 }
 
+export async function POST(request: NextRequest) {
+  try {
+    const user = await requireSessionUser(request);
+    if (Number(request.headers.get("content-length")) > MAX_REQUEST_LENGTH) throw new Error("H3 Director request is too large.");
+    const raw = await request.text();
+    if (raw.length > MAX_REQUEST_LENGTH) throw new Error("H3 Director request is too large.");
+    const body: unknown = JSON.parse(raw);
+    if (!isRecord(body)) throw new Error("Enter a valid H3 Director request.");
+    const instruction = cleanText(body.message || body.text);
+    if (!instruction) throw new Error("Tell the H3 AI Director what to create or refine.");
+    const requestKey = request.headers.get("idempotency-key") || undefined;
+    if (request.headers.get("prefer") !== "respond-async") return await directShot(user, body, instruction, requestKey);
+
+    const accountId = user.accountId;
+    if (!accountId) throw new SessionInvalidError("Sign in with an account.");
+    if (!requestKey) throw new Error("A request ID is required for asynchronous H3 Direct.");
+    const { accepted, result } = claimH3DirectorRequest(accountId, requestKey, body, instruction);
+    if (accepted) after(async () => {
+      const response = await directShot(user, body, instruction, requestKey);
+      finishH3DirectorRequest(accountId, requestKey, { status: response.status, body: await response.json() });
+    });
+    return NextResponse.json(result.body, {
+      status: result.status, headers: { "Cache-Control": "no-store", "X-OTG-H3-Request": result.status === 202 ? "pending" : "complete" },
+    });
+  } catch (error) {
+    return jsonError(error);
+  }
+}
+
+async function directShot(user: Awaited<ReturnType<typeof requireSessionUser>>, body: DirectorBody, userText: string, requestKey?: string) {
+  try {
+    const { context, references } = await referenceContext(body, user.ownerKey);
+    const visuals = await readVisualInputs(body.visualInputs, references);
+    const provider = resolveReviewedAssistantProvider(body.aiProvider, user.admin);
+    const permittedVisuals = provider === "local3060" || body.externalMediaConsent === true ? visuals : [];
+    const conversationId = cleanText(body.conversationId, 120);
+    const previous = conversationId ? getH3DirectorConversation(user.ownerKey, conversationId) : null;
+    const previousPrompt = body.revision === true
+      ? cleanText(body.currentPrompt) || previous?.promptVersions.at(-1)?.prompt
+      : undefined;
+    const shotFlow = cleanText(body.shotFlow, 120);
+    const style = directorStyle(body);
+    const controls = { shotFlow, styleLabel: style?.label };
+    const selectedLoras = Array.isArray(body.loras) && body.loras.length
+      ? validateH3LoraSelections(body.loras, context.mode, undefined, user.ownerKey).resolved.map(({ label, triggerWords }) => ({ label, triggerWords }))
+      : [];
+    const text = JSON.stringify({
+      mode: context.mode,
+      durationSeconds: context.durationSeconds,
+      orientation: cleanText(body.orientation, 20),
+      style,
+      cameraFeel: cleanText(body.cameraFeel, 120),
+      shotFlow,
+      selectedReferences: references,
+      ...(context.characterVoiceBindings?.length ? { characterVoiceBindings: context.characterVoiceBindings } : {}),
+      selectedLoras,
+      ...(previousPrompt ? { priorSceneForRequestedRevision: previousPrompt } : {}),
+      userDraft: userText,
+    });
+    const responseSchema = { name: "h3_scene_direction", schema: h3SceneDirectionSchema(context.mode) };
+    const instructions = h3SceneDirectionInstructions(context, controls);
+    const result = await withAssistantProvider(provider, () => createAssistantText({
+      ownerKey: user.ownerKey,
+      accountId: user.accountId,
+      feature: "h3-director",
+      requestKey,
+      useCase: "h3-director",
+      model: openAIModels().h3,
+      instructions,
+      input: providerInput(text, permittedVisuals),
+      responseSchema,
+      maxOutputTokens: 1750,
+      timeoutMs: 90_000,
+      ...(permittedVisuals.length ? { store: false } : {}),
+      ...(provider === "openai" && visuals.length && !permittedVisuals.length
+        ? { localVariant: { instructions, input: providerInput(text, visuals), responseSchema } } : {}),
+    }));
+
+    const { prompt, shotCount } = compileH3SceneDirection(result.text, context, controls);
+    validateH3DirectedDialogue(userText, prompt);
+    const reply = `Directed ${shotCount === 1 ? "one shot" : `${shotCount} shots`} for your ${context.durationSeconds}-second clip.`;
+    const conversation = upsertH3DirectorConversation({
+      ownerKey: user.ownerKey,
+      conversationId: previous?.id,
+      userText,
+      assistantText: reply,
+      provider: result.provider,
+      model: result.model,
+      prompt,
+    });
+
+    return NextResponse.json({
+      ok: true,
+      prompt,
+      promptFormat: H3_DIRECTED_PROMPT_FORMAT,
+      reply,
+      changes: [],
+      conversationId: conversation.id,
+      promptVersions: conversation.promptVersions,
+      usage: result.usage,
+      model: result.model,
+      provider: result.provider,
+      fallbackReason: result.fallbackReason,
+      visualInputsUsed: result.provider === "local3060" ? visuals.length : permittedVisuals.length,
+    }, { headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    return jsonError(error);
+  }
+}

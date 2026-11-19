@@ -508,7 +508,7 @@ function defaultSeedVcCommand() {
   return `"${py}" "${script}" --source "{input}" --target "{sample}" --output "{outputDir}" --diffusion-steps ${steps} --length-adjust ${lengthAdjust} --inference-cfg-rate ${cfg} --f0-condition false --auto-f0-adjust false --semi-tone-shift {pitch}`;
 }
 
-async function runSeedVc(inputPath: string, outputPath: string, samplePath: string, pitch: string, jobDir: string) {
+async function runSeedVc(inputPath: string, outputPath: string, samplePath: string, pitch: string, jobDir: string, localOnly = false) {
   const outputDir = safeJoin(jobDir, "seedvc_output");
   ensureDir(outputDir);
   const command = process.env.SEEDVC_DUB_COMMAND?.trim() || defaultSeedVcCommand();
@@ -532,6 +532,7 @@ async function runSeedVc(inputPath: string, outputPath: string, samplePath: stri
     HUGGINGFACE_HUB_CACHE: path.join(SEED_VC_HF_CACHE, "hub"),
     TRANSFORMERS_CACHE: path.join(SEED_VC_HF_CACHE, "transformers"),
     TOKENIZERS_PARALLELISM: "false",
+    ...(localOnly ? { HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1" } : {}),
   });
 
   if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size <= 0) {
@@ -687,7 +688,7 @@ function defaultApplioCommand() {
   return `"${applioPython()}" "${applioCoreScript()}" infer --pitch {pitch} --index_rate {indexRate} --volume_envelope 1 --protect {protect} --f0_method {f0Method} --input_path "{input}" --output_path "{output}" --pth_path "{model}" --index_path "{index}" --split_audio False --f0_autotune False --clean_audio False --export_format WAV --embedder_model "{embedderModel}"`;
 }
 
-async function runApplio(inputPath: string, outputPath: string, modelPath: string, indexPath: string, pitch: string, jobDir: string) {
+async function runApplio(inputPath: string, outputPath: string, modelPath: string, indexPath: string, pitch: string, jobDir: string, localOnly = false) {
   if (!modelPath || !indexPath) throw new Error("Trained Applio voice conversion requires modelPath and indexPath.");
 
   const command = process.env.APPLIO_DUB_COMMAND?.trim()
@@ -718,7 +719,7 @@ async function runApplio(inputPath: string, outputPath: string, modelPath: strin
       );
     }
   } catch (error) {
-    if (!isCudaCapacityError(error)) {
+    if (localOnly || !isCudaCapacityError(error)) {
       throw new Error("Character Voice conversion failed.");
     }
 
@@ -749,14 +750,14 @@ async function runApplio(inputPath: string, outputPath: string, modelPath: strin
   }
 }
 
-async function runConversion(args: { engine: Engine; inputPath: string; outputPath: string; voicePath: string; modelPath: string; indexPath: string; samplePath: string; pitch: string; jobDir: string }) {
+async function runConversion(args: { engine: Engine; inputPath: string; outputPath: string; voicePath: string; modelPath: string; indexPath: string; samplePath: string; pitch: string; jobDir: string; localOnly?: boolean }) {
   if (args.engine === "applio") {
-    await runApplio(args.inputPath, args.outputPath, args.modelPath, args.indexPath, args.pitch, args.jobDir);
+    await runApplio(args.inputPath, args.outputPath, args.modelPath, args.indexPath, args.pitch, args.jobDir, args.localOnly);
     return { transcript: "", mode: "applio-trained-character-performance" };
   }
 
   if (args.engine === "seed-vc") {
-    await runSeedVc(args.inputPath, args.outputPath, args.samplePath, args.pitch, args.jobDir);
+    await runSeedVc(args.inputPath, args.outputPath, args.samplePath, args.pitch, args.jobDir, args.localOnly);
     return { transcript: "", mode: "seed-vc-reference" };
   }
 
@@ -784,7 +785,11 @@ export async function POST(req: NextRequest) {
     const dubMode = String(form.get("dub_mode") || form.get("dubMode") || "preserve_performance").trim();
     const emotion = String(form.get("emotion") || "preserve").trim();
     const replacementText = String(form.get("replacement_text") || form.get("replacementText") || form.get("text") || "").trim();
+    const localOnly = form.get("preserve_h3_performance") === "1";
     const voice = resolveVoice(voicePathRaw, requestedEngine, modelPathRaw, indexPathRaw, samplePathRaw);
+    if (localOnly && (dubMode !== "preserve_performance" || voice.engine === "xtts" || voice.engine !== requestedEngine)) {
+      return NextResponse.json({ ok: false, error: "Change Voice requires the selected local performance-conversion engine." }, { status: 422 });
+    }
     for (const inputPath of new Set([voice.samplePath,voice.modelPath,voice.indexPath].filter(Boolean))) {
       const url=new URL("/api/file",req.url);url.searchParams.set("path",inputPath);
       const allowed=await ownerMediaFile(new NextRequest(url,{headers:req.headers}));
@@ -832,6 +837,7 @@ export async function POST(req: NextRequest) {
       samplePath: voice.samplePath,
       pitch,
       jobDir,
+      localOnly,
     });
 
     const stat = await fsp.stat(outputPath);

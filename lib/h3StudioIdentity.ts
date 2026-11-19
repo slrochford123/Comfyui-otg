@@ -19,9 +19,7 @@ export function stableH3StudioJson(value: unknown): string {
   throw new Error("Identity requires finite JSON values; no undefined inputs may be omitted.");
 }
 export function h3StudioDigest(value: unknown) { return crypto.createHash("sha256").update(stableH3StudioJson(value)).digest("hex"); }
-/** Exact one-shot request identity. Reusable qualification deliberately excludes these variables. */
-export function h3StudioQualificationRequestBinding(plan: H3StudioPlan, input: H3DirectJobInput) {
-  const media = (reference: H3DirectReference | null) => {
+function qualificationMedia(reference: H3DirectReference | null) {
     if (!reference) return null;
     if (!path.isAbsolute(reference.path) || fs.realpathSync(reference.path) !== reference.path) throw new Error("Exact regular local reference required.");
     const fd = fs.openSync(reference.path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
@@ -34,15 +32,43 @@ export function h3StudioQualificationRequestBinding(plan: H3StudioPlan, input: H
       return { path: reference.path, name: reference.name, description: reference.description, includeAudio: reference.includeAudio === true,
         sha256: hash.digest("hex"), bytes: after.size };
     } finally { fs.closeSync(fd); }
-  };
-  if (input.videoEdit || input.studioSource || input.rifeInterpolation60Fps) throw new Error("Qualification must use the exact prepared Studio request without extra edit/finalization modes.");
+}
+
+/** Exact one-shot request identity. Reusable qualification deliberately excludes these variables. */
+export function h3StudioQualificationRequestBinding(plan: H3StudioPlan, input: H3DirectJobInput) {
+  if (input.videoEdit || input.studioSource || input.rifeInterpolation60Fps || input.upscale1080p === true) throw new Error("Qualification must use the exact prepared Studio request without extra edit/finalization modes.");
   return { schemaVersion: 2, plan: parseH3StudioPlan(plan), mode: input.mode, quality: input.quality, orientation: input.orientation,
     durationSeconds: input.durationSeconds, prompt: input.prompt, seed: input.seed,
     h3Settings: normalizeH3AdvancedSettings(input.h3Settings || DEFAULT_H3_ADVANCED_SETTINGS, input.images.length),
     optionalLoras: input.optionalLoras.map(l => ({ id: l.id, strength: l.strength })),
-    firstImage: media(input.firstImage), lastImage: media(input.lastImage), images: input.images.map(media), videos: input.videos.map(media), audios: input.audios.map(media) };
+    firstImage: qualificationMedia(input.firstImage), lastImage: qualificationMedia(input.lastImage), images: input.images.map(qualificationMedia), videos: input.videos.map(qualificationMedia), audios: input.audios.map(qualificationMedia) };
 }
 export function h3StudioQualificationRequestDigest(plan: H3StudioPlan, input: H3DirectJobInput) { return h3StudioDigest(h3StudioQualificationRequestBinding(plan, input)); }
+
+/** Native pilot bindings include pinned GPU inputs and the original voice identities. */
+export function h3CharacterVoicesQualificationBinding(input: H3DirectJobInput) {
+  const cast = input.characterVoices;
+  if (!cast || cast.recipe !== "native" || !["h3-reference-to-video", "h3-image-to-video"].includes(input.mode) || input.targetBackend !== "rtx3090"
+    || input.studioPlan || input.studioMedia || input.videoEdit || input.studioSource || input.smartReferences || input.videos.length
+    || cast.refMods.length || input.rifeInterpolation60Fps || input.upscale1080p || input.optionalLoras.length
+    || input.promptFormat !== "minimax-official-v1" || input.preserveExactPrompt !== true) throw Error("The pilot requires the exact native RTX 3090 Character Voices request.");
+  const render = normalizeH3AdvancedSettings(input.h3Settings || DEFAULT_H3_ADVANCED_SETTINGS, input.images.length);
+  if (render.renderMode !== "native" || render.checkpointMode !== "standard" || render.refMod.enabled || render.motionLab.enabled) throw Error("The approved pilot uses a Standard native H3 graph.");
+  if (input.mode === "h3-image-to-video" && (!input.firstImage || input.images.length || input.audios.length || cast.references.length)) throw Error("The I2V pilot needs its exact opening frame and native dialogue workflow.");
+  const firstImage = qualificationMedia(input.firstImage), lastImage = qualificationMedia(input.lastImage);
+  const images = input.images.map(qualificationMedia), audios = input.audios.map(qualificationMedia);
+  const selected = [firstImage, lastImage, ...images, ...audios].filter(Boolean);
+  if (selected.length !== Object.keys(cast.inputHashes).length || selected.some(file => cast.inputHashes[file!.path] !== file!.sha256)) throw Error("Pinned pilot reference bytes differ from the reviewed selection.");
+  const voiceTargets = cast.voiceTargets.map(voice => {
+    const sample = qualificationMedia(voice.sample);
+    if (!sample || sample.sha256 !== voice.sha256) throw Error("The saved voice source changed after review.");
+    return { characterId: voice.characterId, modelId: voice.modelId, sample };
+  });
+  return { schemaVersion: 2, kind: "character-voices", mode: input.mode, targetBackend: input.targetBackend, quality: input.quality,
+    orientation: input.orientation, durationSeconds: input.durationSeconds, prompt: input.prompt, seed: input.seed,
+    h3Settings: render, firstImage, lastImage, images, audios, voiceTargets,
+    cast: JSON.parse(JSON.stringify({ ...cast, voiceTargets: undefined })) as unknown };
+}
 export const isH3StudioSha256 = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 export function validH3StudioDependency(value: unknown): value is H3StudioDependency {
   const d = value as H3StudioDependency | null;
@@ -93,4 +119,20 @@ export function computeH3StudioSourceRevision(root = process.cwd()) {
     if (!fs.lstatSync(file).isFile()) throw new Error("Qualification source must be regular files.");
     return { path: name, sha256: crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex") };
   }));
+}
+
+/** Isolated release bundles omit .git. Hash the actual server and workflow sources. */
+export function computeH3CharacterVoicesSourceRevision(root = process.cwd()) {
+  const files: Array<{ path: string; sha256: string }> = [];
+  function visit(relative: string) {
+    const filename = path.join(root, relative), stat = fs.lstatSync(filename);
+    if (stat.isDirectory()) {
+      for (const name of fs.readdirSync(filename)) visit(path.join(relative, name));
+    } else {
+      if (!stat.isFile()) throw Error("Qualification source must contain regular files.");
+      files.push({ path: relative, sha256: crypto.createHash("sha256").update(fs.readFileSync(filename)).digest("hex") });
+    }
+  }
+  for (const relative of ["lib", "comfy_workflows", "scripts/h3-studio", "scripts/register-ts-worker.cjs", "app/api/h3/character-voices", "package.json", "package-lock.json", "tsconfig.json"]) visit(relative);
+  return h3StudioSourceRevision(files);
 }

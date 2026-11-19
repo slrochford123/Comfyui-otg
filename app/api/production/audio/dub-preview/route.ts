@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import fssync from "node:fs";
@@ -7,8 +8,17 @@ import { promisify } from "node:util";
 
 import { NextRequest, NextResponse } from "next/server";
 
+import { GET as listVoiceModels } from "@/app/api/voice/models/route";
+import { POST as convertVoicePerformance } from "@/app/api/voice/dub/route";
+import { loadCharacter } from "@/lib/characters/store";
+import { assertSameOrigin, RequestError } from "@/lib/routeSecurity";
+import { alignActedTake, compareObservedSpeech, extractCorrectionLine, extractCorrectionSoundtrack, muxCorrectionVideo, openCorrectionMixer, prepareActedTake, transcribeCorrectionLines } from "@/lib/fixVoicesAudio";
+import { MAX_VOICE_LEVEL_DB, MIN_VOICE_LEVEL_DB, speakerIntervalsOverlap } from "@/lib/fixVoicesDsp";
+import { MAX_SCENE_FINE_TUNE, type SceneFineTune } from "@/lib/fixVoicesSceneMatch";
+import { assertFixVoicesTest, correctionCastPlan, correctionMediaUrl, correctionPath, readCorrectionRecord, saveCorrectionPreview, verifiedCorrectionVoice, writeCorrectionRecord, type VoiceCorrectionAnalysis, type VoiceCorrectionPreview, type VoiceCorrectionResult, type VoiceCorrectionSkip } from "@/lib/fixVoicesSession";
 import { SessionInvalidError } from "@/lib/ownerKey";
 import {
+  productionAudioAnalysisRoot,
   productionAudioGalleryRoots,
   productionAudioProductionsRoot,
 } from "@/lib/productionAudioSourcePaths";
@@ -157,6 +167,7 @@ async function muxDubbedAudio(sourceVideoPath: string, dubbedAudioPath: string, 
 type AudioStudioVoiceSegmentV36BPW5 = {
   start: number;
   end: number;
+  blockedReason?: string;
 };
 
 type AudioStudioVoiceMappingV36BPW5 = {
@@ -179,12 +190,6 @@ type AudioStudioRenderedSegmentV36BPW5 = {
   mapping: AudioStudioVoiceMappingV36BPW5;
   segment: AudioStudioVoiceSegmentV36BPW5;
   audioPath: string;
-};
-
-type AudioStudioMixPlanV36BPW9 = {
-  sourceBedPath: string;
-  sourceBedKind: "demucs_background" | "original_audio";
-  sourceBedKeepsOriginalDialogue: boolean;
 };
 
 function normalizeSecondsV36BPW5(value: unknown) {
@@ -211,14 +216,18 @@ function segmentsForDetectedVoiceV36BPW5(body: any, voiceId: string) {
   return normalizeSegmentsV36BPW5(found?.segments);
 }
 
-function analysisBackgroundStemPathV36BPW9(body: any) {
-  const value = String(
-    body?.audioClipAnalysis?.separation?.backgroundStemPath ||
-      body?.audioClipAnalysis?.backgroundStemPath ||
-      "",
-  ).trim();
-  if (!value || !path.isAbsolute(value) || !fssync.existsSync(value)) return "";
-  return value;
+async function analyzedDialogueStem(request: NextRequest, owner: string, body: any, source: string) {
+  const id = String(body?.audioClipAnalysis?.runId || "");
+  if (!/^audio(?:-[a-f0-9-]{36}|_[0-9]+_[a-f0-9]+)$/.test(id)) throw new RequestError("Analyze the original clip to isolate its speech before converting voices.", 422);
+  const root = process.env.OTG_AUDIO_ANALYSIS_DIR || productionAudioAnalysisRoot();
+  const work = path.join(root, safeSegment(owner), id);
+  const analysis = await fs.readFile(path.join(work, "analysis.json"), "utf8").then(value => JSON.parse(value)).catch(() => null);
+  const stem = String(analysis?.separation?.dialogueStemPath || "");
+  if (!analysis?.sourcePath || analysis.separation?.tool !== "demucs" || !await exists(stem) || !await productionAudioMediaReadable(request, stem)) {
+    throw new RequestError("The analysis did not produce an isolated dialogue track. Run Analyze Clip again with speech separation available.", 422);
+  }
+  if (await fs.realpath(source) !== await fs.realpath(analysis.sourcePath)) throw new RequestError("This audio analysis belongs to another clip. Analyze the selected video again.", 422);
+  return {stem, voices: analysis.voices || []};
 }
 
 function normalizeVoiceMappingsV36BPW5(body: any) {
@@ -271,64 +280,12 @@ function normalizeVoiceMappingsV36BPW5(body: any) {
   }];
 }
 
-async function extractAudioSegmentV36BPW5(sourceVideoPath: string, segment: AudioStudioVoiceSegmentV36BPW5, outputPath: string) {
-  const duration = Math.max(0.05, segment.end - segment.start);
-  await execFileAsync(
-    FFMPEG_BIN,
-    [
-      "-y",
-      "-ss",
-      String(segment.start),
-      "-t",
-      String(duration),
-      "-i",
-      sourceVideoPath,
-      "-vn",
-      "-ac",
-      "1",
-      "-ar",
-      "44100",
-      "-c:a",
-      "pcm_s16le",
-      outputPath,
-    ],
-    { timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024 * 20, windowsHide: true },
-  );
-}
-
-async function runVoiceDubForSegmentV36BPW5(request: NextRequest, segmentPath: string, voicePath: string, title: string, engine: string) {
-  const segmentBytes = await fs.readFile(segmentPath);
-  const form = new FormData();
-  form.append("performance_audio", new Blob([new Uint8Array(segmentBytes)], { type: "audio/wav" }), path.basename(segmentPath));
-  form.append("voice_path", voicePath);
-  form.append("engine", engine || "auto");
-  form.append("title", title);
-
-  const dubResponse = await fetch(new URL("/api/voice/dub", request.nextUrl.origin), {
-    method: "POST",
-    body: form,
-    headers: { cookie: request.headers.get("cookie") || "" },
-    cache: "no-store",
-  });
-
-  const dubJson = await dubResponse.json().catch(() => null);
-  if (!dubResponse.ok || !dubJson?.ok) {
-    throw new Error(dubJson?.error || `Voice dub failed (${dubResponse.status}).`);
-  }
-
-  const dubbedAudioPath = String(dubJson.audioPath || "").trim();
-  if (!dubbedAudioPath || !fssync.existsSync(dubbedAudioPath)) {
-    throw new Error("Voice dub completed but did not return a readable dubbed audio file.");
-  }
-
-  return { audioPath: dubbedAudioPath, dub: dubJson };
-}
-
 async function runMappedVoiceDubForSegmentV36BPW5(
   request: NextRequest,
   segmentPath: string,
   mapping: AudioStudioVoiceMappingV36BPW5,
   title: string,
+  strict = false,
 ) {
   const segmentBytes = await fs.readFile(segmentPath);
   const form = new FormData();
@@ -345,17 +302,19 @@ async function runMappedVoiceDubForSegmentV36BPW5(
   form.append("character_id", mapping.characterId || "");
   form.append("voice_model_id", mapping.voiceModelId || "");
 
-  const dubResponse = await fetch(new URL("/api/voice/dub", request.nextUrl.origin), {
-    method: "POST",
-    body: form,
-    headers: { cookie: request.headers.get("cookie") || "" },
-    cache: "no-store",
-  });
+  if (strict) form.append("preserve_h3_performance", "1");
+  const dubResponse = strict
+    ? await convertVoicePerformance(new NextRequest(new URL("/api/voice/dub", request.url), {method: "POST", body: form, headers: {cookie: request.headers.get("cookie") || ""}}))
+    : await fetch(new URL("/api/voice/dub", request.nextUrl.origin), {
+      method: "POST", body: form, headers: {cookie: request.headers.get("cookie") || ""}, cache: "no-store",
+    });
 
   const dubJson = await dubResponse.json().catch(() => null);
   if (!dubResponse.ok || !dubJson?.ok) {
+    if (strict) throw new RequestError(dubResponse.status === 409 ? "The voice conversion GPU is busy. Try again shortly." : `${mapping.voiceName} could not be converted with ${mapping.engine}. The original was preserved.`, dubResponse.status === 409 ? 409 : 422);
     throw new Error(dubJson?.error || `Voice dub failed (${dubResponse.status}).`);
   }
+  if (strict && (dubJson.engine !== mapping.engine || dubJson.sourceSpeechMode !== "source-performance")) throw new RequestError("The converter returned an unexpected engine or speech source. The original was preserved.", 422);
 
   const dubbedAudioPath = String(dubJson.audioPath || "").trim();
   if (!dubbedAudioPath || !fssync.existsSync(dubbedAudioPath)) {
@@ -365,141 +324,286 @@ async function runMappedVoiceDubForSegmentV36BPW5(
   return { audioPath: dubbedAudioPath, dub: dubJson };
 }
 
-async function mixRenderedSegmentsV36BPW5(
-  sourceVideoPath: string,
-  renderedSegments: AudioStudioRenderedSegmentV36BPW5[],
-  outputPath: string,
-  mixPlan: AudioStudioMixPlanV36BPW9,
-) {
-  if (!renderedSegments.length) throw new Error("No dubbed speaker segments were generated.");
-
-  // OTG_AUDIO_STUDIO_PRESERVE_SOURCE_BED_V36BPW6
-  // OTG_AUDIO_STUDIO_REMOVE_DOUBLED_ORIGINAL_VOICE_V36BPW7
-  // Use the separated no-vocals bed when analysis produced one. Otherwise preserve the original
-  // audio bed outside mapped dialogue, but remove it during mapped dubbed segments so the source
-  // voice does not double against the replacement voice.
-  const sourceBedVolumeRaw = Number(process.env.OTG_AUDIO_STUDIO_SOURCE_BED_VOLUME ?? 1);
-  const mappedDialogueBedVolumeRaw = Number(
-    process.env.OTG_AUDIO_STUDIO_MAPPED_DIALOGUE_BED_VOLUME ??
-      (mixPlan.sourceBedKeepsOriginalDialogue ? 0 : 1),
-  );
-  // OTG_AUDIO_STUDIO_DUBBED_VOICE_GAIN_V36BPW8
-  // Segment voice conversion often returns quieter audio than the original clip bed.
-  // Boost the dubbed segments before mixing and apply a limiter after the final mix.
-  const dubbedVoiceVolumeRaw = Number(process.env.OTG_AUDIO_STUDIO_DUBBED_VOICE_VOLUME ?? 1.8);
-  const sourceBedVolume = Number.isFinite(sourceBedVolumeRaw) ? Math.max(0, Math.min(2, sourceBedVolumeRaw)) : 1;
-  const duckedSourceBedVolume = Number.isFinite(mappedDialogueBedVolumeRaw) ? Math.max(0, Math.min(1, mappedDialogueBedVolumeRaw)) : 0;
-  const dubbedVoiceVolume = Number.isFinite(dubbedVoiceVolumeRaw) ? Math.max(0.25, Math.min(4, dubbedVoiceVolumeRaw)) : 1.8;
-
-  const args = ["-y", "-i", sourceVideoPath];
-  let renderedInputOffset = 1;
-  let baseInputLabel = "[0:a]";
-  if (mixPlan.sourceBedPath) {
-    args.push("-i", mixPlan.sourceBedPath);
-    renderedInputOffset = 2;
-    baseInputLabel = "[1:a]";
-  }
-  for (const rendered of renderedSegments) args.push("-i", rendered.audioPath);
-
-  let sourceBedFilter = `${baseInputLabel}volume=${sourceBedVolume}`;
-  for (const rendered of renderedSegments) {
-    if (mixPlan.sourceBedKeepsOriginalDialogue && rendered.segment.end > rendered.segment.start) {
-      sourceBedFilter += `,volume=enable='between(t,${rendered.segment.start},${rendered.segment.end})':volume=${duckedSourceBedVolume}`;
-    }
-  }
-
-  const filters: string[] = [`${sourceBedFilter}[base]`];
-  const labels: string[] = ["[base]"];
-
-  renderedSegments.forEach((rendered, index) => {
-    const inputIndex = index + renderedInputOffset;
-    const duration = Math.max(0.05, rendered.segment.end - rendered.segment.start);
-    const delayMs = Math.max(0, Math.round(rendered.segment.start * 1000));
-    const label = `seg${index}`;
-    filters.push(`[${inputIndex}:a]atrim=0:${duration},apad,atrim=0:${duration},asetpts=PTS-STARTPTS,volume=${dubbedVoiceVolume},adelay=${delayMs}|${delayMs}[${label}]`);
-    labels.push(`[${label}]`);
-  });
-
-  filters.push(`${labels.join("")}amix=inputs=${labels.length}:duration=longest:dropout_transition=0,alimiter=limit=0.95[outa]`);
-
-  await execFileAsync(
-    FFMPEG_BIN,
-    [...args, "-filter_complex", filters.join(";"), "-map", "[outa]", "-c:a", "aac", "-b:a", "192k", outputPath],
-    { timeout: 20 * 60 * 1000, maxBuffer: 1024 * 1024 * 40, windowsHide: true },
-  );
-}
 async function renderSegmentFirstDubV36BPW5(
   request: NextRequest,
+  owner: string,
   sourceVideoPath: string,
   voiceMappings: AudioStudioVoiceMappingV36BPW5[],
   workDir: string,
-  runId: string,
   body: any,
 ) {
+  const {stem, voices} = await analyzedDialogueStem(request, owner, body, sourceVideoPath);
+  const soundtrack = await extractCorrectionSoundtrack(sourceVideoPath, workDir, false);
+  const mixer = await openCorrectionMixer({...soundtrack, speech: stem});
   const renderedSegments: AudioStudioRenderedSegmentV36BPW5[] = [];
   const baseTitle = safeName(body.title || "audio_studio_dub", "audio_studio_dub");
-  const backgroundStemPath = analysisBackgroundStemPathV36BPW9(body);
-  if (backgroundStemPath && !await productionAudioMediaReadable(request, backgroundStemPath)) throw new ProductionAudioAccessError();
-  const mixPlan: AudioStudioMixPlanV36BPW9 = {
-    sourceBedPath: backgroundStemPath,
-    sourceBedKind: backgroundStemPath ? "demucs_background" : "original_audio",
-    sourceBedKeepsOriginalDialogue: !backgroundStemPath,
-  };
-
+  const skippedSegments: Array<AudioStudioVoiceSegmentV36BPW5 & {voiceId: string; reason: string}> = [];
+  const allTurns = (voices as {id: string; segments: AudioStudioVoiceSegmentV36BPW5[]}[]).flatMap(voice => voice.segments.map(segment => ({...segment, voiceId: voice.id})));
   for (const [mappingIndex, mapping] of voiceMappings.entries()) {
-    if (!mapping.segments.length && voiceMappings.length > 1) {
-      throw new Error(`Detected ${mapping.voiceId} has no diarization segments. Re-analyze the clip before starting multi-voice dub.`);
-    }
-
-    const segments = mapping.segments.length
-      ? mapping.segments
-      : [{ start: 0, end: 0 }];
-
-    for (const [segmentIndex, rawSegment] of segments.entries()) {
-      const segment = rawSegment.end > rawSegment.start
-        ? rawSegment
-        : { start: 0, end: 60 * 60 };
-
-      const segmentPath = safeJoin(
-        workDir,
-        `${safeSegment(mapping.voiceId || `speaker_${mappingIndex + 1}`)}_${String(segmentIndex + 1).padStart(3, "0")}.wav`,
-      );
-
-      if (rawSegment.end > rawSegment.start) {
-        await extractAudioSegmentV36BPW5(sourceVideoPath, rawSegment, segmentPath);
-      } else {
-        await execFileAsync(
-          FFMPEG_BIN,
-          ["-y", "-i", sourceVideoPath, "-vn", "-ac", "1", "-ar", "44100", "-c:a", "pcm_s16le", segmentPath],
-          { timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024 * 20, windowsHide: true },
-        );
+    const segments = mapping.segments.length ? mapping.segments : allTurns.filter(turn => turn.voiceId === mapping.voiceId);
+    if (!segments.length) throw new RequestError(`Detected ${mapping.voiceId} has no diarized speech intervals. Re-analyze the clip.`, 422);
+    for (const [segmentIndex, segment] of segments.entries()) {
+      const overlaps = allTurns.some(turn => turn.voiceId !== mapping.voiceId && speakerIntervalsOverlap(segment, turn));
+      const blocked = overlaps ? "Speech overlaps a different speaker." : mixer.rejectInterval(segment);
+      if (blocked) {
+        skippedSegments.push({start: segment.start, end: segment.end, voiceId: mapping.voiceId, reason: blocked});
+        continue;
       }
-
-      const dubbed = await runMappedVoiceDubForSegmentV36BPW5(
-        request,
-        segmentPath,
-        mapping,
-        `${baseTitle}_${safeSegment(mapping.voiceId || `speaker_${mappingIndex + 1}`)}_${String(segmentIndex + 1).padStart(3, "0")}_${runId}`,
-      );
-
-      renderedSegments.push({
-        mapping,
-        segment: rawSegment.end > rawSegment.start ? rawSegment : { start: 0, end: 60 * 60 },
-        audioPath: dubbed.audioPath,
-      });
+      const segmentPath = safeJoin(workDir, `speaker-${mappingIndex + 1}-${segmentIndex + 1}.wav`);
+      await extractCorrectionLine(stem, segment, segmentPath);
+      const dubbed = await runMappedVoiceDubForSegmentV36BPW5(request, segmentPath, mapping, `${baseTitle}_${safeSegment(mapping.voiceId)}_${segmentIndex + 1}`);
+      const reason = await mixer.apply({...segment, audioPath: dubbed.audioPath});
+      if (reason) {
+        skippedSegments.push({start: segment.start, end: segment.end, voiceId: mapping.voiceId, reason});
+        continue;
+      }
+      renderedSegments.push({mapping, segment, audioPath: dubbed.audioPath});
     }
   }
+  if (!renderedSegments.length) throw new RequestError(skippedSegments[0]?.reason || "No isolated dialogue was converted. The original is available.", 422);
+  const dubbedAudioPath = safeJoin(workDir, "corrected-soundtrack.wav");
+  await mixer.write(dubbedAudioPath);
+  return {dubbedAudioPath, renderedSegments, skippedSegments, mixPlan: {sourceBedKind: "original_audio_with_selected_dialogue_replaced", sourceBedKeepsOriginalDialogue: true}};
+}
 
-  const dubbedAudioPath = safeJoin(workDir, "segment_first_dubbed_audio.m4a");
-  await mixRenderedSegmentsV36BPW5(sourceVideoPath, renderedSegments, dubbedAudioPath, mixPlan);
+type CorrectionTarget = {id: string; name: string; engine: string; path: string; samplePath?: string; modelPath?: string; indexPath?: string; characterId?: string};
+type CorrectionTake = {file: File; voiceId: string; segmentIndex: number};
 
-  return { dubbedAudioPath, renderedSegments, mixPlan };
+async function remixFixVoices(request: NextRequest, owner: string, body: Record<string, unknown>) {
+  if (body.matchOriginalScene !== undefined && typeof body.matchOriginalScene !== "boolean") {
+    throw new RequestError("Match Original Scene must be on or off.", 400);
+  }
+  const matchOriginalScene = body.matchOriginalScene === true;
+  const currentId = String(body.previewId || "");
+  const current = await readCorrectionRecord<VoiceCorrectionPreview>(owner, currentId, "preview");
+  const sourceId = current.sourcePreviewId || currentId;
+  const source = sourceId === currentId ? current : await readCorrectionRecord<VoiceCorrectionPreview>(owner, sourceId, "preview");
+  const files = source.convertedFiles;
+  if (!files?.length || files.length !== source.renderedSegments.length) {
+    throw new RequestError("The converted speech for this preview is unavailable. Convert the original clip again to adjust the levels.", 422);
+  }
+  const allowed = new Set(source.renderedSegments.map(segment => segment.voiceId));
+  const levels = new Map<string, number>();
+  if (!Array.isArray(body.speakerLevels) || body.speakerLevels.length > allowed.size) {
+    throw new RequestError("Choose one level per converted speaker.", 400);
+  }
+  for (const entry of body.speakerLevels) {
+    const voiceId = entry?.voiceId;
+    const levelDb = entry?.levelDb;
+    if (typeof voiceId !== "string" || !allowed.has(voiceId) || levels.has(voiceId)
+        || typeof levelDb !== "number" || !Number.isInteger(levelDb) || levelDb < MIN_VOICE_LEVEL_DB || levelDb > MAX_VOICE_LEVEL_DB) {
+      throw new RequestError("Choose a level between −18 and +6 dB for each converted speaker.", 400);
+    }
+    levels.set(voiceId, levelDb);
+  }
+  const fineTune = new Map<number, SceneFineTune>();
+  const adjustments = body.cueAdjustments ?? [];
+  if (!Array.isArray(adjustments) || adjustments.length > source.renderedSegments.length || (!matchOriginalScene && adjustments.length)) {
+    throw new RequestError("Select Match Original Scene to fine-tune converted lines.", 400);
+  }
+  for (const entry of adjustments) {
+    const index = entry?.cueIndex;
+    const distance = entry?.distance;
+    const reflections = entry?.reflections;
+    if (!Number.isInteger(index) || index < 0 || index >= source.renderedSegments.length || fineTune.has(index)
+        || ![distance, reflections].every(value => Number.isInteger(value) && Math.abs(value) <= MAX_SCENE_FINE_TUNE)) {
+      throw new RequestError("Choose valid Fine-Tune settings for each converted line.", 400);
+    }
+    fineTune.set(index, {distance, reflections});
+  }
+  const analysis = await readCorrectionRecord<VoiceCorrectionAnalysis>(owner, source.analysisId, "analysis");
+  if (!analysis.mixReady || !analysis.mixSource || !await productionAudioMediaReadable(request, analysis.sourcePath)) {
+    throw new RequestError("The original audio for this preview is unavailable.", 422);
+  }
+  const originalWorkDir = correctionPath(owner, sourceId, "preview");
+  const mixer = await openCorrectionMixer(analysis.mixSource);
+  const renderedSegments: VoiceCorrectionResult[] = [];
+  const skippedSegments = [...source.skippedSegments];
+  for (const [index, original] of source.renderedSegments.entries()) {
+    const segment = {...original, cueIndex: index, levelDb: levels.get(original.voiceId) ?? 0, fineTune: fineTune.get(index)};
+    if (request.signal.aborted) throw new RequestError("Voice level adjustment was cancelled.", 409);
+    const file = files[index];
+    if (!/^converted-[a-f0-9-]{36}\.wav$/.test(file)) throw new ProductionAudioAccessError();
+    const audioPath = path.join(originalWorkDir, file);
+    if (!(await fs.lstat(audioPath).catch(() => null))?.isFile()) {
+      throw new RequestError("A converted line for this preview is unavailable.", 422);
+    }
+    const unsafe = mixer.rejectInterval(segment);
+    const edit = {...segment, audioPath};
+    let reason = unsafe;
+    if (!reason && matchOriginalScene) {
+      const attempt = await mixer.applySceneMatched(edit);
+      segment.sceneMatch = attempt.sceneMatch;
+      segment.fineTuneWarning = attempt.fineTuneWarning;
+      reason = attempt.reason;
+    } else if (!reason) {
+      reason = await mixer.apply(edit);
+    }
+    if (reason.includes("clip the")) throw new RequestError("That voice level would distort the soundtrack. Try a lower level.", 422);
+    if (reason) skippedSegments.push({start: segment.start, end: segment.end, voiceId: segment.voiceId, reason});
+    else renderedSegments.push(segment);
+  }
+  if (!renderedSegments.length) throw new RequestError("No converted lines can be adjusted safely. The original audio is available.", 422);
+  const previewId = `audio-dub-${randomUUID()}`;
+  const workDir = correctionPath(owner, previewId, "preview");
+  await fs.mkdir(workDir, {recursive: true, mode: 0o700});
+  let completed = false;
+  try {
+    const mixed = path.join(workDir, "corrected-soundtrack.wav");
+    const previewPath = path.join(workDir, analysis.sourcePath.endsWith(".webm") ? "corrected.webm" : "corrected.mp4");
+    await mixer.write(mixed);
+    await muxCorrectionVideo(analysis.sourcePath, mixed, previewPath);
+    await writeCorrectionRecord(owner, previewId, "preview", {
+      previewPath, contentMode:source.contentMode, sourceFileName: source.sourceFileName, analysisId: source.analysisId, sourceJobId: source.sourceJobId,
+      sourcePreviewId: sourceId, matchOriginalScene, renderedSegments, skippedSegments,
+    });
+    completed = true;
+    return NextResponse.json({ok: true, previewId, previewVideoUrl: correctionMediaUrl(previewPath), unadjustedVideoUrl: correctionMediaUrl(source.previewPath),
+      renderedSegments, matchOriginalScene, skippedSegments, warnings: analysis.warnings}, {headers: {"Cache-Control": "private, no-store"}});
+  } finally {
+    if (!completed) await fs.rm(workDir, {force: true, recursive: true}).catch(() => undefined);
+  }
+}
+
+async function renderFixVoices(request: NextRequest, owner: string, body: Record<string, unknown>, take: CorrectionTake | null) {
+  await assertFixVoicesTest(request);
+  if (body.action === "save") return NextResponse.json(await saveCorrectionPreview(request, owner, String(body.previewId || "")), {headers: {"Cache-Control": "private, no-store"}});
+  if (body.action === "remix") return remixFixVoices(request, owner, body);
+  const analysisId = String(body.analysisId || "");
+  const analysis = await readCorrectionRecord<VoiceCorrectionAnalysis>(owner, analysisId, "analysis");
+  if (!analysis.mixReady || !analysis.mixSource) throw new RequestError("A reliable isolated speech track is required. Load the original or try a clearer clip.", 422);
+  if (!await productionAudioMediaReadable(request, analysis.sourcePath)) throw new ProductionAudioAccessError();
+  const assignments = Array.isArray(body.voiceMappings) ? body.voiceMappings : [];
+  if (!assignments.length || assignments.length > 24) throw new RequestError("Select a replacement voice for at least one detected speaker.", 400);
+  const {items} = await (await listVoiceModels(request)).json() as {items?: CorrectionTarget[]};
+  const cast = analysis.voiceTargets ? undefined : await correctionCastPlan(owner, analysis.sourceJobId);
+  const mappings: AudioStudioVoiceMappingV36BPW5[] = [];
+  const seen = new Set<string>();
+  for (const assignment of assignments) {
+    const voiceId = String(assignment?.voiceId || "");
+    const lane = analysis.voices.find(voice => voice.id === voiceId);
+    if (!lane || seen.has(voiceId)) throw new RequestError("Choose each detected speaker once.", 400);
+    seen.add(voiceId);
+    const targetVoiceId = String(assignment?.targetVoiceId || "");
+    let target = items?.find(voice => voice.id === targetVoiceId);
+    const confirmedCharacter = String(assignment?.characterId || "");
+    if (lane.needsCharacterConfirmation && !analysis.cast?.some(member => member.characterId === confirmedCharacter)) {
+      throw new RequestError("Listen to this cue and confirm who spoke before converting.", 422);
+    }
+    const characterId = lane.needsCharacterConfirmation ? confirmedCharacter : lane.suggestedCharacterId;
+    const match = (analysis.voiceTargets || cast?.voiceTargets || []).find(voice => voice.modelId === targetVoiceId
+      && (!characterId || voice.characterId === characterId));
+    if (match) {
+      const pinned = await verifiedCorrectionVoice(request, match);
+      if (!pinned) throw new RequestError("The saved voice used for this clip is unavailable or changed. Choose another saved voice.", 422);
+      target = {id: pinned.modelId, name: pinned.sample.name, characterId: pinned.characterId, path: pinned.sample.path, samplePath: pinned.sample.path, engine: "reference"};
+    }
+    if (!target && targetVoiceId.startsWith("character-sample:")) {
+      const character = loadCharacter(owner, targetVoiceId.slice("character-sample:".length));
+      if (character?.referenceAudioPath) target = {id: targetVoiceId, name: character.name, path: character.referenceAudioPath, samplePath: character.referenceAudioPath, engine: "reference", characterId: character.id};
+    }
+    if (!target?.path || !await productionAudioMediaReadable(request, target.path)) throw new RequestError("Choose a saved voice available to this account.", 422);
+    mappings.push({ voiceId, voiceModelId: target.id, characterId: target.characterId || "", voicePath: target.path, samplePath: target.samplePath || "",
+      voiceName: target.name, modelPath: target.modelPath || "", indexPath: target.indexPath || "", engine: target.engine === "character" ? "applio" : "seed-vc",
+      dubMode: "preserve_performance", emotion: "preserve", replacementText: "", segments: lane.segments });
+  }
+  if (take && (!seen.has(take.voiceId) || !Number.isInteger(take.segmentIndex) || !mappings.find(mapping => mapping.voiceId === take.voiceId)?.segments[take.segmentIndex])) {
+    throw new RequestError("Choose which line the recorded take replaces.", 400);
+  }
+  const runId = `audio-dub-${randomUUID()}`;
+  const workDir = correctionPath(owner, runId, "preview");
+  await fs.mkdir(workDir, {recursive: true, mode: 0o700});
+  let completed = false;
+  try {
+    const mixer = await openCorrectionMixer(analysis.mixSource);
+    let actedTake = "";
+    if (take) {
+      const uploadedTake = path.join(workDir, "recording.audio");
+      await fs.writeFile(uploadedTake, Buffer.from(await take.file.arrayBuffer()), {mode: 0o600, flag: "wx"});
+      actedTake = await prepareActedTake(uploadedTake, workDir).catch(error => {
+        if (error instanceof RequestError) throw error;
+        throw new RequestError("The recorded take could not be read. Record it again or choose a playable audio file.", 422);
+      });
+    }
+    const skippedSegments: VoiceCorrectionSkip[] = [];
+    const renderedSegments: VoiceCorrectionResult[] = [];
+    const convertedFiles: string[] = [];
+    const warnings = new Set(analysis.warnings);
+    let busy = false;
+    for (const mapping of mappings) for (const [index, segment] of mapping.segments.entries()) {
+      if (request.signal.aborted) throw new RequestError("Voice conversion was cancelled.", 409);
+      const useTake = take?.voiceId === mapping.voiceId && take.segmentIndex === index;
+      const blocked = mapping.segments[index].blockedReason || mixer.rejectInterval(segment);
+      if (blocked) {
+        skippedSegments.push({start: segment.start, end: segment.end, voiceId: mapping.voiceId, reason: blocked});
+        continue;
+      }
+      try {
+        const segmentPath = safeJoin(workDir, `${safeSegment(mapping.voiceId)}-${index}.wav`);
+        await extractCorrectionLine(analysis.mixSource.speech, segment, segmentPath);
+        const performance = useTake ? await alignActedTake(segmentPath, actedTake, path.join(workDir, "aligned-take.wav"), request.signal) : segmentPath;
+        const converted = await runMappedVoiceDubForSegmentV36BPW5(request, performance, mapping, `fix-${mapping.voiceId}-${index}`, true);
+        if (request.signal.aborted) throw new RequestError("Voice conversion was cancelled.", 409);
+        const [from, to] = await transcribeCorrectionLines([performance, converted.audioPath], request.signal).catch(() => {
+          throw new RequestError("Speech verification failed. This line kept its original audio.", 422);
+        });
+        const check = compareObservedSpeech(from, to);
+        const speechIssue = check.reason || check.warning;
+        if (speechIssue) {
+          skippedSegments.push({start: segment.start, end: segment.end, voiceId: mapping.voiceId, reason: speechIssue});
+          continue;
+        }
+        const convertedFile = `converted-${randomUUID()}.wav`;
+        const audioPath = path.join(workDir, convertedFile);
+        await fs.copyFile(converted.audioPath, audioPath);
+        const reason = await mixer.apply({...segment, audioPath, take: useTake});
+        if (reason) {
+          await fs.unlink(audioPath).catch(() => undefined);
+          skippedSegments.push({start: segment.start, end: segment.end, voiceId: mapping.voiceId, reason});
+          continue;
+        }
+        renderedSegments.push({start: segment.start, end: segment.end, voiceId: mapping.voiceId, targetVoiceId: mapping.voiceModelId, engine: mapping.engine, usedActedTake: useTake, cueIndex: renderedSegments.length});
+        convertedFiles.push(convertedFile);
+      } catch (error) {
+        if (request.signal.aborted) throw new RequestError("Voice conversion was cancelled.", 409);
+        const reason = error instanceof RequestError ? error.message : "This line could not be converted safely. It kept its original audio.";
+        busy ||= error instanceof RequestError && error.status === 409;
+        skippedSegments.push({start: segment.start, end: segment.end, voiceId: mapping.voiceId, reason});
+      }
+    }
+    if (!renderedSegments.length) throw new RequestError(skippedSegments[0]?.reason || "No selected dialogue could be corrected. The original is available.", busy ? 409 : 422);
+    if (request.signal.aborted) throw new RequestError("Voice conversion was cancelled.", 409);
+    const mixed = path.join(workDir, "corrected-soundtrack.wav");
+    await mixer.write(mixed);
+    const previewPath = path.join(workDir, analysis.sourcePath.endsWith(".webm") ? "corrected.webm" : "corrected.mp4");
+    await muxCorrectionVideo(analysis.sourcePath, mixed, previewPath);
+    await writeCorrectionRecord(owner, runId, "preview", {previewPath, contentMode:analysis.contentMode, sourceFileName: analysis.sourceFileName, analysisId, sourceJobId: analysis.sourceJobId, renderedSegments, skippedSegments, convertedFiles});
+    completed = true;
+    return NextResponse.json({ok: true, previewId: runId, previewVideoUrl: correctionMediaUrl(previewPath), sourceVideoUrl: correctionMediaUrl(analysis.sourcePath), renderedSegments, skippedSegments, warnings: [...warnings]}, {headers: {"Cache-Control": "private, no-store"}});
+  } finally {
+    if (!completed) await fs.rm(workDir, {force: true, recursive: true}).catch(() => undefined);
+  }
 }
 
 export async function POST(request: NextRequest) {
   try {
     const ownerKey = await ownerKeyFromRequest(request);
-    const body = await request.json();
+    assertSameOrigin(request);
+    let take: CorrectionTake | null = null;
+    let body;
+    if (request.headers.get("content-type")?.includes("multipart/form-data")) {
+      await assertFixVoicesTest(request);
+      if (Number(request.headers.get("content-length")) > 13 * 1024 * 1024) throw new RequestError("Upload a take under 12 MB.", 413);
+      const form = await request.formData();
+      body = JSON.parse(String(form.get("payload") || "{}"));
+      const file = form.get("take");
+      if (!file || typeof file === "string" || !file.size || file.size > 12 * 1024 * 1024) throw new RequestError("Record or upload a nonempty take under 12 MB.", 400);
+      take = {file, voiceId: String(form.get("takeVoiceId") || ""), segmentIndex: Number(form.get("takeSegmentIndex") ?? -1)};
+    } else {
+      body = await request.json();
+    }
+    if (body?.fixVoices === true) return await renderFixVoices(request, ownerKey, body, take);
+    if (take) throw new RequestError("Recorded takes are available in Fix Voices.", 400);
     const voiceMappings = normalizeVoiceMappingsV36BPW5(body);
     if (!voiceMappings.length) {
       return NextResponse.json({ ok: false, error: "Map at least one detected voice lane to a usable character voice model before starting dub." }, { status: 400 });
@@ -510,12 +614,12 @@ export async function POST(request: NextRequest) {
     await fs.mkdir(workDir, { recursive: true });
 
     const sourceVideoPath = await findSourceVideo(body, request, workDir);
-    const { dubbedAudioPath, renderedSegments, mixPlan } = await renderSegmentFirstDubV36BPW5(
+    const { dubbedAudioPath, renderedSegments, skippedSegments, mixPlan } = await renderSegmentFirstDubV36BPW5(
       request,
+      ownerKey,
       sourceVideoPath,
       voiceMappings,
       workDir,
-      runId,
       body,
     );
 
@@ -552,6 +656,7 @@ export async function POST(request: NextRequest) {
         emotion: mapping.emotion,
         segmentCount: mapping.segments.length,
       })),
+      skippedSegments,
       renderedSegments: renderedSegments.map((rendered) => ({
         voiceId: rendered.mapping.voiceId,
         characterId: rendered.mapping.characterId,
@@ -561,6 +666,7 @@ export async function POST(request: NextRequest) {
       })),
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error: any) {
+    if (error instanceof RequestError) return NextResponse.json({ok:false,error:error.message},{status:error.status});
     if (error instanceof ProductionAudioAccessError) return NextResponse.json({ok:false,error:error.message},{status:404});
     if (error instanceof SessionInvalidError) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });

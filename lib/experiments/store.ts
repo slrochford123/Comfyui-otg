@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import { DEFAULT_LAB_SETTINGS, EXPERIMENTS, labExperiment, isRetiredExperiment, type LabSettings } from "./catalog";
 import { RequestError } from "@/lib/requestError";
 import { MAX_LAB_IMAGE_BYTES, MAX_LAB_REFERENCE_BYTES } from "./imageTypes";
-import { productionNsfwScope } from "./availability";
+import { productionNsfwScope, standaloneDirectorScope } from "./availability";
 import { LAB_STYLE_IDS, H3_VISUAL_STYLE_OPTIONS, H3_CAMERA_FEEL_OPTIONS, H3_SHOT_FLOW_OPTIONS } from "./creative";
 import { MAX_H3_RENDER_REFERENCES } from "./referenceLimits";
 
@@ -41,10 +41,12 @@ export function requireTestLab() {
 }
 export function labRoot() {
   const prod = productionNsfwScope();
-  if (!prod) requireTestLab();
-  const root = prod ? process.env.OTG_H3_NSFW_ROOT || "" : process.env.OTG_EXPERIMENTS_ROOT || "/home/shawn-rochford/AI/runtime/test/experiments";
+  const standalone = standaloneDirectorScope();
+  if (!prod && !standalone) requireTestLab();
+  const root = standalone ? process.env.OTG_STANDALONE_DIRECTOR_ROOT || `/home/shawn-rochford/AI/runtime/${process.env.OTG_ENV}/director` : prod ? process.env.OTG_H3_NSFW_ROOT || "" : process.env.OTG_EXPERIMENTS_ROOT || "/home/shawn-rochford/AI/runtime/test/experiments";
   if (!path.isAbsolute(root) || root === "/" || root !== path.normalize(root)) throw new RequestError("Invalid experiment storage configuration.", 503);
   if (prod && (root === process.env.OTG_EXPERIMENTS_ROOT || root.startsWith("/home/shawn-rochford/AI/runtime/test/"))) throw new RequestError("Production H3 NSFW requires separate private storage.", 503);
+  if (standalone && process.env.OTG_ENV === "prod" && root.startsWith("/home/shawn-rochford/AI/runtime/test/")) throw new RequestError("Director storage must match its environment.",503);
   const data = path.resolve(process.env.OTG_DATA_DIR || path.join(process.cwd(), "data"));
   if (root === data || root.startsWith(data + path.sep)) throw new RequestError("Experiments must be outside application/gallery data.", 503);
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -102,22 +104,30 @@ function text(value: unknown, max: number, label: string) {
 export function validateSettings(value: unknown): LabSettings {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new RequestError("Invalid settings.", 400);
   const s = value as Record<string, unknown>;
-  const options = { mode: ["text", "image", "reference", "edit", "edit-image"], resolution: ["0.2", "0.6", "1"], orientation: ["landscape", "portrait"], gpu: ["auto", "rtx3090", "rtx5060ti"], recipe: ["author", "turbo8"] };
+  const options = { mode: ["text", "image", "reference", "edit", "edit-image", "text-image"], resolution: ["0.2", "0.6", "1"], orientation: ["landscape", "portrait"], gpu: ["auto", "rtx3090", "rtx5060ti"], recipe: ["author", "turbo8"] };
   for (const [key, values] of Object.entries(options)) if (!values.includes(s[key] as string)) throw new RequestError(`Invalid ${key}.`, 400);
+  if (s.directorModel !== undefined && !["qwen4b","huihui9b"].includes(s.directorModel as string)) throw new RequestError("Invalid Director model.",400);
   if (s.variant !== undefined && !["pika6","base8"].includes(s.variant as string)) throw new RequestError("Invalid experiment variant.",400);
   if (s.seedLocked !== undefined && typeof s.seedLocked !== "boolean") throw new RequestError("Invalid seed lock.",400);
   if (s.stylePresetId !== undefined && (typeof s.stylePresetId!=="string"||!LAB_STYLE_IDS.has(s.stylePresetId))) throw new RequestError("Invalid H3 style.",400);
+  if (s.directedPrompt !== undefined && typeof s.directedPrompt !== "boolean") throw new RequestError("Invalid H3 directed prompt setting.",400);
   for (const [key, values] of Object.entries({visualStyle:H3_VISUAL_STYLE_OPTIONS,cameraFeel:H3_CAMERA_FEEL_OPTIONS,shotFlow:H3_SHOT_FLOW_OPTIONS}))
     if (s[key] !== undefined && (typeof s[key]!=="string"||!(values as readonly string[]).includes(s[key] as string))) throw new RequestError("Invalid look control.",400);
-  if (s.loras !== undefined && (!Array.isArray(s.loras) || s.loras.length>6 || new Set(s.loras.map(l=>l?.id)).size!==s.loras.length || s.loras.some(l=>!l||typeof l.id!=="string"||!/^[\w-]{1,140}$/.test(l.id)||!Number.isFinite(l.strength)||l.strength < -8||l.strength>8))) throw new RequestError("Invalid H3 LoRA selection.",400);
+  if (s.loras !== undefined && (!Array.isArray(s.loras) || new Set(s.loras.map(l=>l?.id)).size!==s.loras.length || s.loras.some(l=>!l||typeof l.id!=="string"||!/^[\w-]{1,140}$/.test(l.id)||!Number.isFinite(l.strength)||l.strength < -8||l.strength>8))) throw new RequestError("Invalid H3 LoRA selection.",400);
   if (s.selectedSources !== undefined) {
     if (!Array.isArray(s.selectedSources) || s.selectedSources.length > MAX_H3_RENDER_REFERENCES || new Set(s.selectedSources).size !== s.selectedSources.length) throw new RequestError("Select up to 12 references for one render. Saved uploads are not limited.",400);
     s.selectedSources.forEach(validId);
   }
   if (!Number.isInteger(s.seconds) || Number(s.seconds) < 2 || Number(s.seconds) > 15 || !Number.isSafeInteger(s.seed) || Number(s.seed) < 0) throw new RequestError("Duration must be 2–15 whole seconds and seed a nonnegative safe integer.", 400);
-  const creative=Object.fromEntries(["stylePresetId","visualStyle","cameraFeel","shotFlow","loras"].filter(key=>s[key]!==undefined).map(key=>[key,s[key]]));
+  const creative=Object.fromEntries(["stylePresetId","visualStyle","cameraFeel","shotFlow","loras","directedPrompt"].filter(key=>s[key]!==undefined).map(key=>[key,s[key]]));
   if(Array.isArray(s.loras))creative.loras=s.loras.map(l=>({id:l.id,strength:l.strength}));
-  return { mode: s.mode, resolution: s.resolution, orientation: s.orientation, gpu: s.gpu, recipe: s.recipe, seconds: s.seconds, seed: s.seed, prompt: text(s.prompt, 8000, "prompt"), ...creative, ...(s.seedLocked === undefined ? {} : {seedLocked:s.seedLocked}), ...(s.variant === undefined ? {} : {variant:s.variant}), ...(s.selectedSources === undefined ? {} : {selectedSources:[...s.selectedSources as string[]]}) } as LabSettings;
+  for(const key of ["experimentalAudioReferences","manualPrompt"] as const)if(s[key]!==undefined&&typeof s[key]!=="boolean")throw new RequestError("Invalid H3 preference.",400);
+  if(s.referenceCharacters!==undefined){
+    if(!s.referenceCharacters||typeof s.referenceCharacters!=="object"||Array.isArray(s.referenceCharacters)||Object.keys(s.referenceCharacters).length>1000)throw new RequestError("Invalid character references.",400);
+    for(const [asset,value] of Object.entries(s.referenceCharacters)){validId(asset);if(!value||typeof value!=="object"||![value.characterId,value.imageId,value.version].every(v=>typeof v==="string"&&v.length>0&&v.length<=120))throw new RequestError("Invalid Character Card selection.",400);}
+  }
+  if (s.upscale1080p !== undefined && typeof s.upscale1080p !== "boolean") throw new RequestError("Invalid upscaler setting.",400);
+  return { ...(s.experimentalAudioReferences===undefined?{}:{experimentalAudioReferences:s.experimentalAudioReferences}),...(s.manualPrompt===undefined?{}:{manualPrompt:s.manualPrompt}),...(s.referenceCharacters===undefined?{}:{referenceCharacters:s.referenceCharacters}), ...(s.upscale1080p === undefined ? {} : {upscale1080p:s.upscale1080p}), mode: s.mode, resolution: s.resolution, orientation: s.orientation, gpu: s.gpu, recipe: s.recipe, seconds: s.seconds, seed: s.seed, prompt: text(s.prompt, 8000, "prompt"), ...creative, ...(s.directorModel === undefined ? {} : {directorModel:s.directorModel}), ...(s.seedLocked === undefined ? {} : {seedLocked:s.seedLocked}), ...(s.variant === undefined ? {} : {variant:s.variant}), ...(s.selectedSources === undefined ? {} : {selectedSources:[...s.selectedSources as string[]]}) } as LabSettings;
 }
 export function createSession(owner: string, experiment: string) {
   const entry = labExperiment(experiment);
@@ -125,7 +135,7 @@ export function createSession(owner: string, experiment: string) {
   if (isRetiredExperiment(experiment)) throw new RequestError("This model has been removed. Choose another H3 model; existing media is unchanged.",409);
   if (productionNsfwScope() && entry.kind !== "h3-admin") throw new RequestError("Model not available.", 403);
   return withLab(db => db.transaction(() => {
-    if (!uncappedH3History(experiment) && (db.prepare(`SELECT count(*) AS n FROM sessions WHERE owner=? AND experiment IN (${TESTING_SQL_IDS})`).get(owner,...TESTING_EXPERIMENT_IDS) as { n: number }).n >= 200) throw new RequestError("The 200-record research limit has been reached; export and review storage with the administrator.", 409);
+    if (!standaloneDirectorScope() && !uncappedH3History(experiment) && (db.prepare(`SELECT count(*) AS n FROM sessions WHERE owner=? AND experiment IN (${TESTING_SQL_IDS})`).get(owner,...TESTING_EXPERIMENT_IDS) as { n: number }).n >= 200) throw new RequestError("The 200-record research limit has been reached; export and review storage with the administrator.", 409);
     const id = crypto.randomUUID(), now = new Date().toISOString();
     const settings = {...DEFAULT_LAB_SETTINGS, ...(experiment === "body-swap" ? {mode:"edit"} : experiment === "cinematic-upscale" || experiment === "director-studio" ? {mode:"text"} : {} )};
     db.prepare("INSERT INTO sessions (id,owner,experiment,title,settings,created,updated) VALUES (?,?,?,?,?,?,?)").run(id, owner, experiment, entry.title, JSON.stringify(settings), now, now);

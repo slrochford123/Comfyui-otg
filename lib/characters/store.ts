@@ -380,3 +380,18 @@ export function deleteCharacter(ownerKey: string, characterId: string): { delete
 
   return { deleted, removedFiles };
 }
+
+/** Only the originating extractor may version its own saved visual record. Voice fields remain intact. */
+export function updateExtractedCharacterVisuals(ownerKey:string, characterId:string, candidateId:string,
+  input:Pick<CharacterRecord,"imagePath"|"metadata"> & Partial<Pick<CharacterRecord,"name"|"description"|"defaultCharacterImagePath"|"fullBodyImagePath"|"characterCardPath"|"characterCardWorkflowImagePath"|"originalSourceImagePath">>):CharacterRecord {
+ const existing=loadCharacter(ownerKey,characterId);
+ if(!existing||existing.metadata?.extractionCandidateId!==candidateId)throw new Error("The saved extraction character does not match this character.");
+ if(!isInsideDataRoot(input.imagePath)||!hasBytes(input.imagePath))throw new Error("Approved character image is unavailable.");
+ const duplicate=listCharacters(ownerKey).find(c=>c.id!==characterId&&c.name.toLocaleLowerCase()===(input.name||existing.name).toLocaleLowerCase());
+ if(duplicate)throw new CharacterNameConflictError(input.name||existing.name);
+ const file=characterFile(ownerKey,characterId),next={...existing,...input,metadata:{...existing.metadata,...input.metadata},updatedAt:nextUpdatedAt(existing.updatedAt)};
+ const history=path.join(charactersRoot(ownerKey),"versions",characterId);ensureDir(history);
+ const backup=path.join(history,existing.updatedAt.replace(/[^a-zA-Z0-9]/g,"_")+".json");
+ if(!fs.existsSync(backup))fs.writeFileSync(backup,JSON.stringify(existing,null,2),{flag:"wx",mode:0o600});
+ const temporary=file+"."+Date.now()+".tmp";fs.writeFileSync(temporary,JSON.stringify(next,null,2),{flag:"wx",mode:0o600});fs.renameSync(temporary,file);return next;
+}

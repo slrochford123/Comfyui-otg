@@ -1,10 +1,12 @@
 "use client";
 
 import { createPortal } from "react-dom";
+import dynamic from "next/dynamic";
+const NsfwGalleryCollection=dynamic(()=>import("./NsfwGalleryCollection"));
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { adminStyles as styles } from "../admin/AdminShell";
 
-type SourceId = "comfy-3090" | "comfy-5060";
+import type { AdminGallerySourceId as SourceId } from "@/lib/adminGallerySources";
 type SourceFilter = "all" | SourceId;
 type MediaFilter = "all" | "images" | "videos" | "audio" | "other";
 type Sort = "newest" | "oldest" | "name";
@@ -34,9 +36,11 @@ const SOURCE_OPTIONS: Array<{ id: SourceFilter; label: string }> = [
   { id: "all", label: "All Sources" },
   { id: "comfy-3090", label: "RTX 3090 ComfyUI" },
   { id: "comfy-5060", label: "RTX 5060 Ti ComfyUI" },
+  { id: "comfy-3060", label: "RTX 3060 ComfyUI (8190)" },
 ];
 
 export default function AdminGallerySourcesPanel() {
+  const [nsfw,setNsfw]=useState(false);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
   const [sort, setSort] = useState<Sort>("newest");
@@ -56,6 +60,9 @@ export default function AdminGallerySourcesPanel() {
   const nextOffset = useRef(0);
   const snapshotId = useRef("");
 
+  async function classify(item:Item){
+    try{const r=await fetch("/api/admin/nsfw-gallery",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"classify",source:item.source,rel:item.rel})});const b=await r.json();if(!r.ok)throw Error(b.error||"Could not classify this file.");setMessage("Added to the admin NSFW collection. Owner was not inferred.");}catch(e){setMessage(e instanceof Error?e.message:"Classification failed.");}
+  }
   const load = useCallback(async (append = false) => {
     if (append && appending.current) return null;
     appending.current = append;
@@ -144,6 +151,7 @@ export default function AdminGallerySourcesPanel() {
     }
   }, [load]);
 
+  if(nsfw)return <section className="space-y-4"><button className={styles.button} aria-pressed="true" onClick={()=>setNsfw(false)}>NSFW · Back to Full Gallery</button><NsfwGalleryCollection admin/></section>;
   return (
     <section className="space-y-4">
       <div className={styles.card}>
@@ -153,6 +161,7 @@ export default function AdminGallerySourcesPanel() {
             <p className={styles.muted}>Search both output libraries. Source files remain in their original location; owner identity is not inferred from filenames.</p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <button type="button" className={styles.button} aria-pressed="false" onClick={()=>setNsfw(true)}>NSFW</button>
             <button type="button" onClick={() => void load(false)} disabled={loading} className={styles.button}>
               {loading ? "Refreshing..." : "Refresh"}
             </button>
@@ -197,7 +206,7 @@ export default function AdminGallerySourcesPanel() {
 
       <div className={viewMode === "list" ? "space-y-3" : viewMode === "grid" ? "grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-5" : "grid gap-4 md:grid-cols-2 xl:grid-cols-3"}>
         {visibleItems.map((item) => (
-          <MediaCard key={item.id} item={item} compact={viewMode === "grid"} list={viewMode === "list"} deleting={deletingId === item.id} onOpen={() => setViewerId(item.id)} onDelete={() => void deleteItem(item)} />
+          <MediaCard key={item.id} item={item} compact={viewMode === "grid"} list={viewMode === "list"} deleting={deletingId === item.id} onOpen={() => setViewerId(item.id)} onDelete={() => void deleteItem(item)} onClassify={()=>void classify(item)} />
         ))}
       </div>
 
@@ -211,7 +220,7 @@ export default function AdminGallerySourcesPanel() {
   );
 }
 
-function MediaCard({ item, compact, list, deleting, onOpen, onDelete }: { item: Item; compact: boolean; list: boolean; deleting: boolean; onOpen: () => void; onDelete: () => void }) {
+function MediaCard({ item, compact, list, deleting, onOpen, onDelete,onClassify }: { item: Item; compact: boolean; list: boolean; deleting: boolean; onOpen: () => void; onDelete: () => void;onClassify:()=>void }) {
   return (
     <article className={`overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] ${list ? "flex flex-col gap-3 p-3 md:flex-row md:items-center" : "p-3"}`}>
       <button type="button" onClick={onOpen} className={list ? "min-w-0 flex-1 text-left" : "block w-full text-left"}>
@@ -228,6 +237,7 @@ function MediaCard({ item, compact, list, deleting, onOpen, onDelete }: { item: 
         </div>
       </button>
       <div className={`flex flex-wrap gap-2 ${list ? "md:shrink-0" : "mt-3"}`}>
+        {(item.kind==="image"||item.kind==="video")&&<button type="button" className={actionClass} onClick={onClassify}>Mark NSFW</button>}
         <a href={downloadAdminGalleryUrl(item)} download={item.name} className={actionClass}>Download</a>
         {/\.(png|jpe?g|webp|gif|mp4|webm|mov|mkv)$/i.test(item.name) ? <button type="button" onClick={onDelete} disabled={deleting} className="min-h-11 rounded-xl border border-[var(--color-error)] bg-[var(--color-surface)] px-3 py-2 text-xs font-semibold text-[var(--color-error)] disabled:opacity-50">{deleting ? "Deleting..." : "Delete"}</button> : null}
       </div>

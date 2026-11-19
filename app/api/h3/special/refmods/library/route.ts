@@ -11,6 +11,7 @@ import { readH3RefModSidecar } from "@/lib/h3SpecialModes/refModCreation";
 import {canUseCharacterRefMod} from "@/lib/h3SpecialModes/characterRefCardAccess";
 import {CHARACTER_REF_PREFIX} from "@/lib/h3SpecialModes/characterRefCardContract";
 import {characterRefCardsEnabled} from "@/lib/h3SpecialModes/characterRefCardAvailability";
+import {loadCharacter} from "@/lib/characters/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -62,10 +63,11 @@ export async function GET(request: NextRequest) {
             normalized.modifiedAt = stat.mtime.toISOString();
           }
           const privateCard=normalized.name.startsWith(CHARACTER_REF_PREFIX);
+          const extractedCard=privateCard&&/\/extracted-[a-f0-9-]{36}\//.test(normalized.name);
           if(privateCard)normalized.backend=target|| (entry.otgBackend==="rtx5060ti"?"rtx5060ti":"rtx3090");
           const sidecar = target === "rtx5060ti"&&!privateCard ? null : readH3RefModSidecar(normalized.name);
           if (sidecar) {
-            if(privateCard&&sidecar.ownerKey===owner.ownerKey&&characterRefCardsEnabled())normalized.editableCardId=sidecar.jobId;
+            if(privateCard&&!extractedCard&&sidecar.ownerKey===owner.ownerKey&&characterRefCardsEnabled())normalized.editableCardId=sidecar.jobId;
             if(sidecar.ownerKey===owner.ownerKey&&sidecar.voice){normalized.category="character";normalized.voiceName=sidecar.voice.name;}
             normalized.sourceType = "otg-created";
             normalized.characterId = sidecar.characterId || null;
@@ -78,7 +80,16 @@ export async function GET(request: NextRequest) {
             normalized.previewPath = sidecar.isolatedDerivativePath || sidecar.sourceClipPath || sidecar.sourceAssets?.[0]?.path || null;
             normalized.createdAt ||= sidecar.createdAt;
             normalized.modifiedAt ||= sidecar.updatedAt;
-            if(privateCard&&sidecar.ownerKey===owner.ownerKey){normalized.displayName=sidecar.name;normalized.description=sidecar.description||"";normalized.previewPath=`/api/h3/special/refmods/character-card?id=${sidecar.jobId}&preview=${sidecar.cardPreviewPath?normalized.name.split("/").pop():"1"}`;}
+            if(privateCard&&sidecar.ownerKey===owner.ownerKey){
+              normalized.displayName=sidecar.name;normalized.description=sidecar.description||"";
+              if(extractedCard){
+                // Extracted characters use the Characters library, not the separate RefMod-card editor.
+                const character=sidecar.characterId?loadCharacter(owner.ownerKey,sidecar.characterId):null;
+                normalized.displayName=character?.name||sidecar.name;
+                const preview=character?.characterCardWorkflowImagePath||character?.characterCardPath||character?.imagePath||sidecar.sourceAssets?.[0]?.path;
+                normalized.previewPath=preview?`/api/file?path=${encodeURIComponent(preview)}`:null;
+              }else normalized.previewPath=`/api/h3/special/refmods/character-card?id=${sidecar.jobId}&preview=${sidecar.cardPreviewPath?normalized.name.split("/").pop():"1"}`;
+            }
           }
           return normalized;
         })

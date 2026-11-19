@@ -1,5 +1,6 @@
 /* OTG_ELEVENLABS_PREVIEW_BACKEND_P1 */
 import path from "node:path";
+import { hasUnlimitedProviderUsage } from "@/lib/auth/providerUsage";
 import { promises as fs } from "node:fs";
 
 export type ElevenLabsPreviewRecord = {
@@ -26,7 +27,7 @@ export type ElevenLabsStatus = {
   configured: boolean;
   characterCount: number | null;
   remoteCharacterLimit: number | null;
-  localMonthlyLimit: number;
+  localMonthlyLimit: number | null;
   effectiveLimit: number | null;
   minRemainingChars: number;
   remaining: number | null;
@@ -112,6 +113,7 @@ async function elevenLabsFetch(pathname: string, init?: RequestInit): Promise<Re
   }
 
   return fetch(`${ELEVENLABS_API_BASE}${pathname}`, {
+    signal: AbortSignal.timeout(60_000),
     ...init,
     headers: {
       "xi-api-key": apiKey,
@@ -121,11 +123,12 @@ async function elevenLabsFetch(pathname: string, init?: RequestInit): Promise<Re
   });
 }
 
-export async function getElevenLabsStatus(): Promise<ElevenLabsStatus> {
+export async function getElevenLabsStatus(accountId?: string): Promise<ElevenLabsStatus> {
+  const unlimited = hasUnlimitedProviderUsage(accountId);
   const enabled = isElevenLabsEnabled();
   const configured = Boolean(getApiKey());
-  const localMonthlyLimit = getElevenLabsLocalMonthlyLimit();
-  const minRemainingChars = getElevenLabsMinRemainingChars();
+  const localMonthlyLimit = unlimited ? null : getElevenLabsLocalMonthlyLimit();
+  const minRemainingChars = unlimited ? 0 : getElevenLabsMinRemainingChars();
   const model = getElevenLabsModel();
   const outputFormat = getElevenLabsOutputFormat();
 
@@ -186,8 +189,8 @@ export async function getElevenLabsStatus(): Promise<ElevenLabsStatus> {
   const characterCount = Number(json.character_count ?? 0);
   const remoteCharacterLimit = Number(json.character_limit ?? localMonthlyLimit);
   const safeCharacterCount = Number.isFinite(characterCount) ? characterCount : 0;
-  const safeRemoteLimit = Number.isFinite(remoteCharacterLimit) ? remoteCharacterLimit : localMonthlyLimit;
-  const effectiveLimit = Math.min(localMonthlyLimit, safeRemoteLimit);
+  const safeRemoteLimit = Number.isFinite(remoteCharacterLimit) ? remoteCharacterLimit : (localMonthlyLimit ?? 0);
+  const effectiveLimit = localMonthlyLimit === null ? safeRemoteLimit : Math.min(localMonthlyLimit, safeRemoteLimit);
   const remaining = Math.max(0, effectiveLimit - safeCharacterCount);
 
   return {
@@ -232,7 +235,7 @@ function validateInput(input: ElevenLabsDesignPreviewInput): void {
   }
 }
 
-export async function createElevenLabsDesignPreview(input: ElevenLabsDesignPreviewInput): Promise<{
+export async function createElevenLabsDesignPreview(input: ElevenLabsDesignPreviewInput, accountId?:string): Promise<{
   text: string;
   characterCostEstimate: number;
   previews: ElevenLabsPreviewRecord[];
@@ -243,8 +246,9 @@ export async function createElevenLabsDesignPreview(input: ElevenLabsDesignPrevi
 
   validateInput(input);
 
-  const status = await getElevenLabsStatus();
+  const status = await getElevenLabsStatus(accountId);
   const estimatedCost = estimateDesignCost(input);
+  if (!status.canGenerate) throw new Error(status.message);
 
   if (!status.configured) {
     throw new Error("ELEVENLABS_API_KEY is not configured.");
@@ -360,4 +364,14 @@ export async function createElevenLabsDesignPreview(input: ElevenLabsDesignPrevi
     characterCostEstimate: estimatedCost,
     previews: saved,
   };
+}
+
+/** Register only the audition explicitly selected by its owner. Never call during preview generation. */
+export async function saveElevenLabsDesignedVoice(input:{name:string;description:string;generatedVoiceId:string}):Promise<string> {
+ if(!isElevenLabsEnabled()||!getApiKey()||!input.generatedVoiceId)throw Error("ElevenLabs voice registration is unavailable.");
+ const response=await elevenLabsFetch("/text-to-voice",{method:"POST",body:JSON.stringify({voice_name:input.name.slice(0,100),voice_description:input.description,generated_voice_id:input.generatedVoiceId})});
+ if(!response.ok)throw Error(`ElevenLabs voice registration failed: HTTP ${response.status}`);
+ const result=await response.json() as {voice_id?:unknown};
+ if(typeof result.voice_id!=="string"||!result.voice_id)throw Error("ElevenLabs did not return a saved voice ID.");
+ return result.voice_id;
 }

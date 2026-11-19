@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import { adminGalleryMediaKind, adminGalleryMime, type AdminGalleryMediaKind } from "@/lib/adminGalleryMedia";
 export type { AdminGalleryMediaKind } from "@/lib/adminGalleryMedia";
 
-export type AdminGallerySourceId = "comfy-3090" | "comfy-5060";
+export type AdminGallerySourceId = "comfy-3090" | "comfy-5060" | "comfy-3060";
 export type AdminGalleryQuery = { search?: string; media?: "all" | AdminGalleryMediaKind; sort?: "newest" | "oldest" | "name" };
 
 export type AdminGallerySourceDefinition = {
@@ -67,10 +67,19 @@ export const ADMIN_GALLERY_SOURCES: AdminGallerySourceDefinition[] = [
     description: "Filesystem output from the RTX 5060 Ti ComfyUI backend.",
     kind: "remote-agent",
   },
+  {
+    id: "comfy-3060",
+    label: "RTX 3060 ComfyUI (8190)",
+    description: "Filesystem output from the RTX 3060 ComfyUI worker.",
+    kind: "local",
+  },
 ];
 
 // OTG_ADMIN_GALLERY_DUAL_LINUX_V2
 function configuredLocalRoot(sourceId: AdminGallerySourceId) {
+  if (sourceId === "comfy-3060") {
+    return String(process.env.OTG_ADMIN_GALLERY_3060_ROOT || "").trim();
+  }
   if (sourceId === "comfy-3090") {
     return String(process.env.OTG_ADMIN_GALLERY_3090_ROOT || "").trim();
   }
@@ -78,6 +87,7 @@ function configuredLocalRoot(sourceId: AdminGallerySourceId) {
 }
 
 function configuredRemoteUrl(sourceId: AdminGallerySourceId) {
+  if (sourceId === "comfy-3060") return "";
   if (sourceId === "comfy-3090") {
     return String(process.env.OTG_ADMIN_GALLERY_3090_URL || "").trim();
   }
@@ -85,6 +95,7 @@ function configuredRemoteUrl(sourceId: AdminGallerySourceId) {
 }
 
 function configuredRemoteToken(sourceId: AdminGallerySourceId) {
+  if (sourceId === "comfy-3060") return "";
   if (sourceId === "comfy-3090") {
     return String(process.env.OTG_ADMIN_GALLERY_3090_TOKEN || "").trim();
   }

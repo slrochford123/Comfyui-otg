@@ -21,7 +21,7 @@ export function characterRefViewPrompt(angle: CharacterRefAngle, description: st
     artistic_style:"Match the original reference image style exactly.",
   });
 }
-export const CHARACTER_REF_PREFIX = "characters/slr-test-cards/";
+export const CHARACTER_REF_PREFIX = process.env.OTG_ENV === "prod" ? "characters/slr-prod-cards/" : "characters/slr-test-cards/";
 export type CharacterRefCardPublic = {
   id: string; revision: number; name: string; description: string; characterId: string;
   mode: "single" | "upload"; gpu: "auto" | "rtx3090" | "rtx5060ti";

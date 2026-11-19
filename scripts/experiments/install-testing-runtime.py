@@ -21,7 +21,7 @@ p=argparse.ArgumentParser();p.add_argument('evidence');p.add_argument('--prepare
 evidence=Path(a.evidence).resolve();live=Path('/home/shawn-rochford/AI/runtime/test/experiments')
 if os.getuid()!=1000 or not (evidence/'source-before.tar.gz').is_file():raise ValueError('Wrong TEST installation boundary')
 cfg=read(evidence/'testing-qualification-runtime.json');cfg['models']={}
-ids=['pika-flex','cinematic-upscale','body-swap','sol-denomix','nvidia-regenerate','pika-baseline','director-studio']
+ids=['pika-flex','cinematic-upscale','body-swap','sol-denomix','pika-baseline','director-studio']
 for model in ids:
     cfg['models'][model]=dict(qualifiedModes=[],variants={},evidence=[],minSeconds=2 if model=='director-studio' else 5)
 def qualify(model,mode,variant,file,equivalence=None):
@@ -68,8 +68,7 @@ for file in (evidence/'testing-qualification').glob('*/status.json'):
 pika=dict(steps=6,sampler='LCM',scheduler='published Pika sigmas',attention='dense',note='CFG 1 · shifts 12/3 · Pika adapter strength 1; no legacy Turbo stacking.')
 baseline=dict(steps=8,sampler='Euler',scheduler='simple',attention='SLA',note='Original Standard Ref2VA Turbo adapter · CFG 1 · shifts 6/3. Short sequences can use dense fallback.')
 for model,item in cfg['models'].items():
-    if model=='nvidia-regenerate':item['reason']='Not enabled: the official model requires 50 Sharpcurve AdaLN branches beyond a standard LoRA. No verified private ComfyUI adapter is implemented. The DenoMix rank-16 refiner is not a substitute.'
-    elif item['qualifiedModes']:item['reason']='Real isolated 3090 qualification passed at the recorded small size. Longer/larger runs remain experimental; 5060 Ti is not qualified. Downloads alone never enable a mode.'
+    if item['qualifiedModes']:item['reason']='Real isolated 3090 qualification passed at the recorded small size. Longer/larger runs remain experimental; 5060 Ti is not qualified. Downloads alone never enable a mode.'
     else:item['reason']='No successful real qualification for this recipe yet. Planning remains available; generation stays disabled.'+(' Last check: '+item['lastQualificationFailure']['reason'] if item.get('lastQualificationFailure') else '')
     if model=='pika-baseline':item['variantRecipes']=dict(pika6=pika,base8=baseline)
     elif model in ('pika-flex','body-swap','cinematic-upscale'):item['recipe']=pika

@@ -378,6 +378,10 @@ export function SavedCharacterLibrary({
       {items.length ? (
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {items.map((item) => {
+            const development = item.metadata?.extractionDevelopment as {workspaceId?:string}|undefined;
+            const sourceVideo = item.metadata?.sourceVideo as {workspace?:string}|undefined;
+            const extractionWorkspace = development?.workspaceId || (item.metadata?.extractionCandidateId ? sourceVideo?.workspace : undefined);
+            const referenceViews = Array.isArray(item.metadata?.extractedViews) ? item.metadata.extractedViews.filter((v):v is {id:string;label:string;path:string}=>!!v&&typeof v.path==='string'&&typeof v.label==='string') : [];
             const imagePath =
               item.defaultCharacterPreviewImagePath ||
               item.defaultCharacterImagePath ||
@@ -422,13 +426,15 @@ export function SavedCharacterLibrary({
                     </p>
                   </div>
                   {audioUrl ? <audio key={audioUrl} aria-label={`Voice for ${item.name}`} src={audioUrl} controls preload="none" className="w-full" /> : null}
+                  {extractionWorkspace && <a className="inline-flex min-h-11 items-center rounded-lg border border-white/20 px-3 py-2 text-sm" href={"/app?tab=characters&extractionWorkspace="+encodeURIComponent(extractionWorkspace)+"&extractionCharacter="+encodeURIComponent(String(item.metadata?.extractionCandidateId || item.id))}>Continue Character Development</a>}
+                  {referenceViews.length>0 && <details><summary className="cursor-pointer text-sm">Approved character references</summary><div className="mt-2 grid grid-cols-2 gap-2">{referenceViews.map(view=><a key={view.id} href={characterAssetUrl(view.path)} target="_blank" rel="noreferrer"><img src={characterAssetUrl(view.path)} alt={view.label} className="max-h-44 w-full object-contain"/><span className="text-xs">{view.label}</span></a>)}</div>{item.characterCardPath&&<a className="mt-2 block underline" href={characterAssetUrl(item.characterCardPath)} target="_blank" rel="noreferrer">Open five-view Character Card</a>}</details>}
                   <SavedCharacterVoicePicker characterId={item.id} name={item.name} hasVoice={!!audioUrl} onSaved={()=>void load().then(()=>setMessage(`Voice saved with ${item.name}.`))}/>
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-white/35">
                       {audioUrl ? `Voice attached · ${item.voiceEngineUsed || "Saved Voice"}` : "Image only · no voice attached"}
                     </span>
                     <div className="flex items-center gap-2">
-                      {onCreateCharacterRefMod ? (
+                      {onCreateCharacterRefMod && !item.metadata?.extractionCandidateId ? (
                         <button
                           type="button"
                           onClick={() => onCreateCharacterRefMod(item)}

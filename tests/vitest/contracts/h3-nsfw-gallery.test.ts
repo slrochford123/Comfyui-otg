@@ -1,0 +1,28 @@
+import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import crypto from "node:crypto";
+import {withLab,createSession} from "@/lib/experiments/store";
+import {exportLabJob} from "@/lib/experiments/generation";
+import {listNsfwGallery,resolveNsfwAsset,updateNsfwGallery,registerNsfwSavedItem} from "@/lib/experiments/nsfwGallery";
+let root:string;
+function asset(owner:string,model="eros-beta7",mode="text"){
+ const session=createSession(owner,model),id=crypto.randomUUID(),job=crypto.randomUUID(),bytes=Buffer.from("CPU metadata fixture; not a generated video");
+ withLab(db=>{db.exec("CREATE TABLE IF NOT EXISTS generation_jobs(id TEXT PRIMARY KEY,owner TEXT,session TEXT,model TEXT,asset TEXT,status TEXT,created REAL)");db.prepare("INSERT INTO assets(id,session,owner,name,mime,role,bytes,sha256,ready,created) VALUES (?,?,?,?,?,?,?,?,1,?)").run(id,session.id,owner,`${id}.mp4`,"video/mp4","generated",bytes.length,crypto.createHash("sha256").update(bytes).digest("hex"),new Date().toISOString());db.prepare("INSERT INTO generation_jobs VALUES (?,?,?,?,?,?,?)").run(job,owner,session.id,model,id,JSON.stringify({state:"completed",cleanedUp:true}),Date.now()/1000);});
+ fs.writeFileSync(path.join(root,id+".media"),bytes);const dir=path.join(root,"jobs",job);fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,"request.json"),JSON.stringify({settings:{mode},sourceDevice:"fixture-device"}));fs.writeFileSync(path.join(dir,"status.json"),JSON.stringify({gpu:"rtx3090",state:"completed",cleanedUp:true}));return {id,job,bytes,file:path.join(root,id+".media")};
+}
+beforeEach(()=>{root=fs.mkdtempSync(path.join(os.tmpdir(),"nsfw-gallery-"));fs.chmodSync(root,0o700);vi.stubEnv("OTG_ENV","test");vi.stubEnv("OTG_EXPERIMENTS_ROOT",root);vi.stubEnv("OTG_DATA_DIR",path.join(root,"application-data"));});
+afterEach(()=>{vi.unstubAllEnvs();fs.rmSync(root,{recursive:true,force:true});});
+describe("private NSFW Gallery",()=>{
+ it("exports the verified ready output ID even when the worker status has no asset ID",()=>{const a=asset("alice");expect(exportLabJob("alice",a.job).status.output).toBe(a.id);expect(()=>exportLabJob("bob",a.job)).toThrow(/not found/);});
+ it("lists owned NSFW outputs and keeps testing jobs out",()=>{const mine=asset("alice"),other=asset("bob");asset("alice","director-studio");const list=listNsfwGallery("alice");expect(list.items.map(i=>i.id)).toEqual([mine.id]);expect(list.items[0]).not.toHaveProperty("file");expect(list.items[0]).not.toHaveProperty("owner");expect(listNsfwGallery("admin",{admin:true}).items.map(i=>i.id).sort()).toEqual([mine.id,other.id].sort());});
+ it("rejects another account's asset even with a known UUID",()=>{const a=asset("alice");expect(()=>resolveNsfwAsset("bob",a.id)).toThrow(/not found/);expect(resolveNsfwAsset("admin",a.id,true).owner).toBe("alice");});
+ it("rejects symlinks and changed bytes instead of converting the wrong source",()=>{const a=asset("alice"),b=asset("alice");fs.writeFileSync(a.file,"different bytes");expect(()=>resolveNsfwAsset("alice",a.id)).toThrow(/receipt/);fs.unlinkSync(a.file);fs.symlinkSync(b.file,a.file);expect(()=>resolveNsfwAsset("alice",a.id)).toThrow(/unavailable/);});
+ it("renames and hides nondestructively and survives another listing",()=>{const a=asset("alice");updateNsfwGallery("alice",a.id,"rename","Captain Tiger");expect(listNsfwGallery("alice").items[0].name).toBe("Captain Tiger");updateNsfwGallery("alice",a.id,"hide",null);expect(listNsfwGallery("alice").total).toBe(0);expect(fs.readFileSync(a.file)).toEqual(a.bytes);updateNsfwGallery("alice",a.id,"restore",null);expect(listNsfwGallery("alice").total).toBe(1);});
+ it("uses the job's original mode and device, independent of the current editor",()=>{const a=asset("alice","eros-beta7","text");expect(listNsfwGallery("alice").items[0]).toMatchObject({id:a.id,mode:"text",jobId:a.job,gpu:"rtx3090",device:"fixture-device"});});
+ it("retains missing records and explains unavailable media",()=>{const a=asset("alice");fs.unlinkSync(a.file);const list=listNsfwGallery("alice");expect(list.total).toBe(0);expect(list.warnings[0]).toMatch(/retained/);withLab(db=>expect(db.prepare("SELECT id FROM assets WHERE id=?").get(a.id)).toBeTruthy());});
+ it("registers a saved take once across retries without making source copies",()=>{const item={name:"Converted take",kind:"video" as const,url:"/api/gallery/file?name=take.mp4",thumbnailUrl:"/api/thumb?name=take.mp4",created:1,gpu:"rtx3090",device:"fixture",favorite:false,source:"Saved voice conversion"};const a=registerNsfwSavedItem("alice","preview-1",item),b=registerNsfwSavedItem("alice","preview-1",{...item,name:"Updated title"});expect(a).toBe(b);expect(listNsfwGallery("alice").items).toHaveLength(1);expect(listNsfwGallery("bob").items).toHaveLength(0);});
+ it("does not assign an unowned classified hardware file to the tagging administrator",()=>{registerNsfwSavedItem("","hardware:source:file",{name:"Existing clip",kind:"video",url:"/api/admin/gallery-file?source=comfy-3090&rel=clip.mp4",thumbnailUrl:"/api/admin/gallery-thumbnail?source=comfy-3090&rel=clip.mp4",created:1,gpu:"comfy-3090",device:"Registered source",favorite:false,source:"Classified hardware output"});expect(listNsfwGallery("admin").items).toHaveLength(0);expect(listNsfwGallery("admin",{admin:true}).items[0].owned).toBe(false);});
+ it("rejects changes from a nonowner and invalid names",()=>{const a=asset("alice");expect(()=>updateNsfwGallery("bob",a.id,"rename","Mine")).toThrow(/not found/);expect(()=>updateNsfwGallery("alice",a.id,"rename","")).toThrow(/name/);});
+});

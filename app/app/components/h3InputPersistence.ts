@@ -15,6 +15,7 @@ export type PersistedH3MediaMeta = {
   size: number;
   lastModified: number;
   description: string;
+  characterRef?: import("@/lib/h3CardReferences").H3CardReference;
   includeAudio?: boolean;
   sourceDurationSeconds?: number;
   clipStartSeconds?: number;
@@ -41,6 +42,7 @@ export type PersistedH3InputState = {
   quality: string;
   h3Settings: H3AdvancedSettings;
   rifeInterpolation60Fps?: boolean;
+  upscale1080p?: boolean;
   duration: 5 | 10;
   orientation: string;
   originalPrompt: string;
@@ -83,6 +85,7 @@ export type PersistedH3InputState = {
   refModsSeedMode?: "random" | "fixed";
   refModsSeed?: string;
   h3DirectorDraft?: string;
+  h3DirectedFingerprint?: string;
   h3DirectorConversationId?: string;
   h3DirectorReply?: string;
   h3DirectorChanges?: string[];

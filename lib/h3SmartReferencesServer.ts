@@ -7,6 +7,7 @@ import {readH3RefModSidecar} from "@/lib/h3SpecialModes/refModCreation";
 import {assertCharacterRefVoiceEnabled, assertCharacterRefVoiceIntact} from "@/lib/h3SpecialModes/characterRefVoice";
 import {preferMediaGpu} from "@/lib/workers/mediaGpuQueue";
 import { H3_BACKEND_PROFILES, type ProductionV2H3BackendId } from "@/lib/production/h3Workflows";
+import { H3_SINGULARITY_V13_CHECKPOINT } from "@/lib/production/h3Settings";
 import { readCompletedH3StagedUpload } from "@/lib/h3StagedUploads";
 import { OTG_DATA_ROOT, safeJoin, safeSegment, ensureDir } from "@/lib/paths";
 import { appendH3SmartMediaMap, checkH3SmartReferences, normalizeH3SmartReferenceSelection, type H3SmartReferenceAsset, type H3SmartReferenceCapabilities, type H3SmartReferenceInput } from "@/lib/h3SmartReferences";
@@ -26,6 +27,20 @@ export async function inspectH3SmartReferences(backend: ProductionV2H3BackendId,
     reason: combined ? "" : "Mixed RefMods and ordinary images need the combined H3 encoder, which is not installed on this GPU. Use the RTX 3090 or keep one reference type. No model is substituted.",
     maxImages: Math.min(9, max("ref_images", 9)), maxVideos: Math.min(3, max("ref_videos", 3)), maxAudios: Math.min(3, max("ref_audios", 3)),
     maxTotalReferenceMedia: 12, maxRefModSlots: Object.keys(loader).filter(key => /^mod_\d+$/.test(key)).length,
+    refModAudioStrength: Object.keys(loader).some(key => /^mod_\d+$/.test(key)) &&
+      Object.keys(loader).filter(key => /^mod_\d+$/.test(key)).every(key =>
+        info.MiniMaxH3RefModsLoader?.input?.optional?.[`audio_strength_${key.slice(4)}`]?.[0] === "FLOAT"),
+    refModVisualSelection: Object.keys(loader).some(key => /^mod_\d+$/.test(key)) &&
+      Object.keys(loader).filter(key => /^mod_\d+$/.test(key)).every(key => {
+        const options = info.MiniMaxH3RefModsLoader?.input?.optional;
+        const choices = options?.[`components_${key.slice(4)}`]?.[0];
+        return Array.isArray(choices) && choices.includes("Visual") && options?.[`audio_strength_${key.slice(4)}`]?.[0] === "FLOAT";
+      }),
+    nativeWavRefModMix: info.PK_MiniMaxH3Combined?.input?.optional?.references?.[0] === "H3_REFS"
+      && info.PK_MiniMaxH3Combined?.input?.optional?.audio_vae?.[0] === "VAE"
+      && info.SLRH3ReferenceMediaBundle?.output?.[0] === "H3_REFS"
+      && [0, 1, 2].every(index => info.SLRH3ReferenceMediaBundle?.input?.optional?.[`audio_${index}`]?.[0] === "AUDIO"),
+    singularityV13: info.UNETLoader?.input?.required?.unet_name?.[0]?.includes(H3_SINGULARITY_V13_CHECKPOINT) === true,
     combinedLimitBasis: "Application guard derived from the expanded native reference blocks and official H3 media envelope. The installed combined node has no separate fixed combined-count limit; this is not a measured mixed-capacity or memory guarantee.",
     firstFrameConsumesReferenceAllowance: false,
     referenceTokenBudget: null,

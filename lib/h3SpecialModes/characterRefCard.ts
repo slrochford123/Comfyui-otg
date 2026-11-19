@@ -127,6 +127,7 @@ export async function editCharacterRefCard(owner:string,cardId:string,data:Recor
       const name=String(data.name||"").trim(),description=String(data.description||"").trim(),characterId=String(data.characterId||"");
       if(name.length>96||description.length>2000||!["single","upload"].includes(String(data.mode))||!["auto","rtx3090","rtx5060ti"].includes(String(data.gpu)))throw new RequestError("Invalid character card settings.",400);
       if(characterId&&!loadCharacter(owner,characterId))throw new RequestError("Character not found for this account.",404);
+      if(characterId&&loadCharacter(owner,characterId)?.metadata?.extractionCandidateId)throw new RequestError("Use Continue Character Development to create a visual RefMod from the approved five individual views.",409);
       if(card.state==="completed"&&(card.name!==name||card.description!==description||card.characterId!==characterId))invalidateEncoding(card);
       card.name=name;card.description=description;card.characterId=characterId;card.mode=data.mode as CharacterRefCard["mode"];card.gpu=data.gpu as MediaGpuChoice;
     }else if(data.action==="remove"){

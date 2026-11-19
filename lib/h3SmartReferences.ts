@@ -1,7 +1,7 @@
 import { normalizeH3RefModSlots, type H3RefModSlot } from "@/lib/h3SpecialModes/refMods";
 
 export type H3SmartReferenceSelection = { useFirstFrame: boolean; refMods: H3RefModSlot[] };
-export type H3SmartReferenceAsset = { path: string; name: string; description: string };
+export type H3SmartReferenceAsset = { path: string; name: string; description: string; characterKey?: string; characterName?: string };
 export type H3SmartReferenceInput = H3SmartReferenceSelection & {
   originalPrompt?: string;
   firstFrame: H3SmartReferenceAsset | null;
@@ -10,6 +10,9 @@ export type H3SmartReferenceInput = H3SmartReferenceSelection & {
 };
 export type H3SmartReferenceMapEntry = { tag: string; name: string; source: "image" | "media" | "refmod"; kind: "image" | "video" | "audio"; description: string; characterKey?: string; characterName?: string; voiceId?: string };
 export type H3SmartRefModInfo = { name: string; kind: string; tokens?: number | null; members?: Array<{kind: "image" | "video" | "audio"; tokens: number}>; characterKey?: string; characterName?: string; voiceId?: string };
+export function h3RefModSignature(ref: H3SmartRefModInfo) {
+  return JSON.stringify([ref.kind, ref.tokens, ref.members, ref.characterKey, ref.voiceId]);
+}
 export type H3SmartReferenceCapabilities = {
   backend: "rtx3090" | "rtx5060ti";
   available: boolean;
@@ -21,6 +24,10 @@ export type H3SmartReferenceCapabilities = {
   maxAudios: number;
   maxTotalReferenceMedia: number;
   maxRefModSlots: number;
+  refModAudioStrength?: boolean;
+  refModVisualSelection?: boolean;
+  nativeWavRefModMix?: boolean;
+  singularityV13?: boolean;
   firstFrameConsumesReferenceAllowance: false;
   referenceTokenBudget: number | null;
   tokenBudgetExplanation: string;
@@ -36,7 +43,7 @@ export function normalizeH3SmartReferenceSelection(value: unknown): H3SmartRefer
   return { useFirstFrame: v.useFirstFrame === true, refMods: normalizeH3RefModSlots(v.refMods || []) };
 }
 export function checkH3SmartReferences(cap: H3SmartReferenceCapabilities, selection: H3SmartReferenceSelection,
-  images: Array<{ name: string; description?: string }>, videos = 0, audios = 0, hasFirstFrame = false) {
+  images: Array<{ name: string; description?: string; characterKey?: string; characterName?: string }>, videos = 0, audios = 0, hasFirstFrame = false) {
   if (!cap.available) throw Error("H3 reference capabilities are unavailable. Recheck the selected GPU before generating.");
   if (selection.useFirstFrame && !cap.firstFrame) throw Error("Use as First Frame is unavailable on this GPU: the native timeline-guide node is missing.");
   if (selection.useFirstFrame && !hasFirstFrame) throw Error("Choose the opening image, or turn off Use as First Frame.");
@@ -47,7 +54,7 @@ export function checkH3SmartReferences(cap: H3SmartReferenceCapabilities, select
   // paired-track/multi-video loader. Preserve the original media pipeline.
   if (mixed && (videos || audios)) throw Error("Keep video/audio references in the existing reference workflow, or remove the RefMods. This installed mixed path supports ordinary still images and RefMods; it does not replace the video/audio path.");
   const count = { image: images.length, video: videos, audio: audios };
-  const map: H3SmartReferenceMapEntry[] = images.map((image, index) => ({ tag: `<Picture ${index + 1}>`, name: image.name, description: image.description || "", source: "image", kind: "image" }));
+  const map: H3SmartReferenceMapEntry[] = images.map((image, index) => ({ tag: `<Picture ${index + 1}>`, name: image.name, description: image.description || "", source: "image", kind: "image", ...(image.characterKey ? {characterKey:image.characterKey,characterName:image.characterName} : {}) }));
   let tokens = 0, tokensKnown = true;
   for (const slot of normalizeH3RefModSlots(selection.refMods)) {
     const info = cap.refMods.find(item => item.name === slot.name);
@@ -73,17 +80,41 @@ export function checkH3SmartReferences(cap: H3SmartReferenceCapabilities, select
   return { referenceMap: map, counts: count, refModTokens: tokensKnown ? tokens : null };
 }
 const SMART_MARKER = "[H3 Smart References]";
-export function h3CharacterVoicePromptLines(map: H3SmartReferenceMapEntry[]) {
+export type H3CharacterVoiceBinding = {
+  characterKey: string;
+  characterName: string;
+  subjectTag: string;
+  visualTags: string[];
+  voiceId: string;
+  audioTags: string[];
+};
+
+function h3ReferenceSubjects(map: H3SmartReferenceMapEntry[]) {
   const groups = new Map<string, H3SmartReferenceMapEntry[]>();
   map.filter(item => item.kind !== "audio").forEach(item => {
     const key = item.characterKey || item.tag;
     groups.set(key, [...(groups.get(key) || []), item]);
   });
-  return [...groups.entries()].flatMap(([key, visual], index) => {
+  return [...groups.entries()].map(([key, visual], index) => {
     const voices = map.filter(item => item.kind === "audio" && item.voiceId && item.characterKey === key);
     if (new Set(voices.map(v => v.voiceId)).size > 1) throw Error(`Choose one saved voice version for ${visual[0].name}; different character voices cannot be assigned to the same subject.`);
-    return [`<Subject ${index + 1}>${visual[0].characterName ? " = " + JSON.stringify(visual[0].characterName) : ""} uses ${visual.map(v => v.tag).join(", ")} for the identity or scene element requested in the original prompt. These references describe the same subject, not additional people.`,
-      ...(voices.length ? [`Only <Subject ${index + 1}> uses ${voices.map(v => v.tag).join(", ")} as the saved character voice. Preserve its vocal identity while speaking only that character's requested dialogue. Do not copy the reference recording's words or assign this voice to other subjects.`] : [])];
+    return { key, visual, voices, subjectTag: `<Subject ${index + 1}>` };
+  });
+}
+
+export function h3CharacterVoiceBindings(map: H3SmartReferenceMapEntry[]): H3CharacterVoiceBinding[] {
+  return h3ReferenceSubjects(map).flatMap(({ key, visual, voices, subjectTag }) => {
+    const voiceId = voices[0]?.voiceId;
+    if (!voiceId || !visual[0].characterKey) return [];
+    return [{ characterKey: key, characterName: visual[0].characterName || visual[0].name, subjectTag,
+      visualTags: visual.map(item => item.tag), voiceId, audioTags: voices.map(item => item.tag) }];
+  });
+}
+
+export function h3CharacterVoicePromptLines(map: H3SmartReferenceMapEntry[]) {
+  return h3ReferenceSubjects(map).flatMap(({ visual, voices, subjectTag }) => {
+    return [`${subjectTag}${visual[0].characterName ? " = " + JSON.stringify(visual[0].characterName) : ""} uses ${visual.map(v => v.tag).join(", ")} for the identity or scene element requested in the original prompt. These references describe the same subject, not additional people.`,
+      ...(voices.length ? [`Only ${subjectTag} uses ${voices.map(v => v.tag).join(", ")} as the saved character voice. Preserve its vocal identity while speaking only that character's requested dialogue. Do not copy the reference recording's words or assign this voice to other subjects.`] : [])];
   });
 }
 export function compileH3SmartReferencePrompt(prompt: string, input: Pick<H3SmartReferenceInput, "referenceMap" | "useFirstFrame">) {

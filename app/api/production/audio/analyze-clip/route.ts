@@ -1,3 +1,5 @@
+import { constants } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -8,6 +10,12 @@ import { SessionInvalidError } from "@/lib/ownerKey";
 import { productionAudioOwner, productionAudioMediaReadable, ProductionAudioAccessError } from "@/lib/productionAudioAccess";
 import { safeSegment } from "@/lib/paths";
 import { runtimePath, voicePython } from "@/lib/runtime/configPaths";
+import { assertSameOrigin, RequestError } from "@/lib/routeSecurity";
+import { requireStorageHeadroom } from "@/lib/storageAdmission";
+import { confidenceInWords, correctionWords, extractCorrectionLine, extractCorrectionSoundtrack, separateCorrectionSoundtrack, transcribeCorrectionLines, type MixSource } from "@/lib/fixVoicesAudio";
+import { labelBlockedVoiceIntervals } from "@/lib/fixVoicesDsp";
+import { resolveSavedH3CorrectionVoice } from "@/lib/h3CharacterVoicesServer";
+import { assertFixVoicesTest, correctionCastPlan, correctionMediaUrl, reopenCorrectionPreview, resolveCorrectionSource, verifiedCorrectionVoice, writeCorrectionRecord } from "@/lib/fixVoicesSession";
 import { acquireAuxiliary3090, AuxiliaryGpuBusyError } from "@/lib/workers/auxiliary3090Lease";
 import {
   productionAudioAnalysisRoot,
@@ -67,6 +75,7 @@ type SpeechSegment = {
   end: number;
   speakerId?: string;
   text?: string;
+  blockedReason?: string;
 };
 
 type DetectedVoiceLane = {
@@ -80,6 +89,10 @@ type DetectedVoiceLane = {
   confidence: string;
   samplePath?: string;
   sampleUrl?: string;
+  suggestedTargetVoiceId?: string;
+  suggestedTargetVoiceName?: string;
+  suggestedCharacterId?: string;
+  needsCharacterConfirmation?: boolean;
 };
 
 type DemucsResult = {
@@ -273,7 +286,7 @@ async function extractVoiceLaneSamples(voices: DetectedVoiceLane[], analysisWav:
   await fs.mkdir(path.join(workDir, "voice_samples"), { recursive: true });
 
   for (const voice of voices) {
-    const firstSegment = voice.segments.find((segment) => segment.end > segment.start);
+    const firstSegment = voice.segments.find((segment) => !segment.blockedReason && segment.end > segment.start) || voice.segments[0];
     if (!firstSegment) continue;
 
     const start = Math.max(0, firstSegment.start);
@@ -530,6 +543,7 @@ async function tryLocalDiarization(
   duration: number,
   expectedSpeakerCount: number,
   workDir: string,
+  cpuOnly = false,
 ) {
   if (process.env.OTG_LOCAL_SPEAKER_DIARIZATION_ENABLED === "0") return null;
   if (!(await exists(LOCAL_DIARIZATION_PYTHON)) || !(await exists(LOCAL_DIARIZATION_SCRIPT)) || !(await exists(LOCAL_DIARIZATION_MODEL))) {
@@ -543,7 +557,7 @@ async function tryLocalDiarization(
         LOCAL_DIARIZATION_SCRIPT,
         "--audio", wavPath,
         "--model", LOCAL_DIARIZATION_MODEL,
-        "--device", LOCAL_DIARIZATION_DEVICE,
+        "--device", cpuOnly ? "cpu" : LOCAL_DIARIZATION_DEVICE,
         ...(expectedSpeakerCount > 0 ? ["--min-speakers", String(expectedSpeakerCount)] : []),
         "--max-speakers", String(expectedSpeakerCount || 5),
       ],
@@ -551,12 +565,13 @@ async function tryLocalDiarization(
         timeout: SPEAKER_DIARIZATION_TIMEOUT_MS,
         maxBuffer: 1024 * 1024 * 20,
         windowsHide: true,
+        env: {...process.env, ...(cpuOnly ? { CUDA_VISIBLE_DEVICES: "" } : {}), HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", PYANNOTE_METRICS_ENABLED: "false"},
       },
     );
     const lines = String(result.stdout || "").trim().split(/\r?\n/g).filter(Boolean);
     const payload = lines.length ? JSON.parse(lines[lines.length - 1]) : {};
     await fs.writeFile(path.join(workDir, "local_diarization.json"), JSON.stringify(payload, null, 2), "utf8");
-    if (payload?.ok === false) return null;
+    if (payload?.ok !== true || !Array.isArray(payload.segments)) return null;
     const voices = normalizeExternalDiarizationPayload(payload, duration);
     return voices.length ? voices : null;
   } catch (error: any) {
@@ -611,19 +626,80 @@ function buildEstimatedSpeakerLanes(
   }).filter((voice) => voice.segmentCount > 0 || totalSpeechSeconds > 0);
 }
 
+async function matchH3CorrectionCues(
+  plan: NonNullable<Awaited<ReturnType<typeof correctionCastPlan>>>,
+  speech: string, voices: DetectedVoiceLane[], splitLanes: boolean, workDir: string, signal: AbortSignal,
+) {
+  const rows = voices.flatMap(voice => voice.segments.map((segment, index) => ({voice, segment, index})));
+  if (!rows.length || rows.length > 24) {
+    for (const voice of voices) for (const segment of voice.segments) {
+      segment.blockedReason ||= "Too many speech cues to verify safely.";
+    }
+    return voices;
+  }
+  const clear = rows.filter(({segment}) => !segment.blockedReason);
+  const files = await Promise.all(clear.map(async ({segment}, index) => {
+    const file = path.join(workDir, `match-${index}.wav`);
+    await extractCorrectionLine(speech, segment, file);
+    return file;
+  }));
+  const transcripts = files.length ? await transcribeCorrectionLines(files, signal).catch(() => []) : [];
+  const candidates = new Map<SpeechSegment, {characterId: string; lineId: string}>();
+  for (const [index, {segment}] of clear.entries()) {
+    const words = transcripts[index];
+    const spoken = words && confidenceInWords(words) ? correctionWords(words.map(word => word.text).join(" ")) : "";
+    if (!spoken) continue;
+    segment.text = words.map(word => word.text).join(" ");
+    const matches = plan.events.filter(event => correctionWords(event.wordText) === spoken
+      && (event.startSeconds === undefined || segment.end + 0.55 >= event.startSeconds)
+      && (event.endSeconds === undefined || segment.start - 0.55 <= event.endSeconds));
+    if (matches.length === 1) candidates.set(segment, matches[0]);
+  }
+  const identity = new Map<SpeechSegment, string>();
+  for (const [segment, cue] of candidates) {
+    if ([...candidates.values()].filter(match => match.lineId === cue.lineId).length === 1) {
+      identity.set(segment, cue.characterId);
+    }
+  }
+  // A detector group can merge non-overlapping turns. Review those turns
+  // individually, and never offer a combined interval with unknown boundaries.
+  return voices.flatMap((voice): DetectedVoiceLane[] => {
+    const known = new Set(voice.segments.map(segment => identity.get(segment)).filter(Boolean));
+    const allMatched = voice.segments.every(segment => segment.blockedReason || identity.has(segment));
+    if (!splitLanes && allMatched && known.size === 1) {
+      return [{...voice, suggestedCharacterId: [...known][0]}];
+    }
+    return voice.segments.map((segment, index) => {
+      const character = identity.get(segment);
+      const unresolvedMerged = (splitLanes || known.size > 1) && !character;
+      const blockedReason = segment.blockedReason || (unresolvedMerged ? "This speech cue could not be separated reliably." : undefined);
+      return {...voice, id: `${voice.id}-cue-${index + 1}`, label: "Speaker cue", segmentCount: 1,
+        totalSpeechSeconds: segment.end - segment.start, segments: [{...segment, blockedReason}],
+        suggestedCharacterId: character, needsCharacterConfirmation: !blockedReason};
+    });
+  });
+}
+
+export async function GET(request: NextRequest) {
+  try { await assertFixVoicesTest(request); }
+  catch { return new NextResponse(null, {status: 404, headers: {"Cache-Control": "private, no-store"}}); }
+  return new NextResponse(null, {status: 204, headers: {"Cache-Control": "private, no-store"}});
+}
+
 export async function POST(request: NextRequest) {
   let releaseGpu:(()=>void)|undefined;
+  let failedFixVoicesDir = "";
   try {
     const ownerKey = await productionAudioOwner(request);
-    const runId = `audio_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    assertSameOrigin(request);
+    const runId = `audio-${randomUUID()}`;
     const workDir = path.join(ANALYSIS_ROOT, safeSegment(ownerKey), runId);
-    await fs.mkdir(workDir, { recursive: true });
-
     const contentType = String(request.headers.get("content-type") || "").toLowerCase();
     let body: any = {};
     let uploadedVideo: File | null = null;
 
     if (contentType.includes("multipart/form-data")) {
+      if (Number(request.headers.get("content-length")) > 97 * 1024 * 1024) throw new RequestError("Upload a video under 96 MB.", 413);
       const form = await request.formData();
       const candidate = form.get("video") || form.get("file");
       if (candidate && typeof (candidate as any).arrayBuffer === "function") {
@@ -632,39 +708,71 @@ export async function POST(request: NextRequest) {
       body = {
         sourceFileName: uploadedVideo?.name || "uploaded-video.mp4",
         expectedSpeakerCount: form.get("expectedSpeakerCount") || form.get("speakerCount") || "",
+        fixVoices: form.get("fixVoices") === "true" || form.get("fixVoices") === "1",
       };
     } else {
       body = await request.json();
     }
 
+    const fixVoices = body?.fixVoices === true;
+    if (fixVoices) {
+      await assertFixVoicesTest(request);
+      failedFixVoicesDir = workDir;
+    }
+    await fs.mkdir(workDir, { recursive: true, mode: 0o700 });
     let sourcePath = "";
+    let sourceJobId: string | undefined;
+    let contentMode: "nsfw" | undefined;
     if (uploadedVideo) {
       const size = Number((uploadedVideo as any).size || 0);
       if (!Number.isFinite(size) || size <= 0) {
         return NextResponse.json({ ok: false, error: "Uploaded video is empty." }, { status: 400 });
       }
+      if (fixVoices && size > 96 * 1024 * 1024) throw new RequestError("Upload a video under 96 MB.", 413);
       const fileName = safeName(uploadedVideo.name || "uploaded-video.mp4", "uploaded-video.mp4");
-      sourcePath = path.join(workDir, fileName);
-      await fs.writeFile(sourcePath, Buffer.from(await uploadedVideo.arrayBuffer()));
+      sourcePath = path.join(workDir, fixVoices ? `source${path.extname(fileName).toLowerCase() || ".mp4"}` : fileName);
+      if (fixVoices) requireStorageHeadroom(workDir, size);
+      await fs.writeFile(sourcePath, Buffer.from(await uploadedVideo.arrayBuffer()), {flag: "wx", mode: 0o600});
+    } else if (fixVoices) {
+      const source = await resolveCorrectionSource(request, ownerKey, body);
+      if (source.savedPreviewId) {
+        const restored = await reopenCorrectionPreview(request, ownerKey, source.savedPreviewId, source.file);
+        await fs.rmdir(workDir);
+        failedFixVoicesDir = "";
+        return NextResponse.json(restored, {headers: {"Cache-Control": "private, no-store"}});
+      }
+      sourceJobId = source.sourceJobId;
+      contentMode = source.contentMode;
+      body.sourceFileName = source.name;
+      sourcePath = path.join(workDir, `source${path.extname(source.name).toLowerCase() || ".mp4"}`);
+      requireStorageHeadroom(workDir, (await fs.stat(source.file)).size);
+      await fs.copyFile(source.file, sourcePath, constants.COPYFILE_EXCL);
     } else {
       sourcePath = await findSourceVideo(body, request, workDir);
     }
-    const duration = await durationSeconds(sourcePath);
-
+    if(contentMode==="nsfw")await fs.writeFile(path.join(workDir,".nsfw-media"),"1",{mode:0o600});
+    const soundtrack = fixVoices ? await extractCorrectionSoundtrack(sourcePath, workDir, true) : null;
+    const duration = soundtrack?.duration ?? await durationSeconds(sourcePath);
+    let mixSource: MixSource | null = null;
+    const warnings: string[] = [];
+    if (soundtrack) {
+      try { mixSource = await separateCorrectionSoundtrack(soundtrack, workDir, request.signal); }
+      catch { warnings.push("Isolated dialogue is unavailable for this clip. The original audio was kept."); }
+    }
     const extractedWav = path.join(workDir, "source_mono_16k.wav");
-    await extractMonoWav(sourcePath, extractedWav);
+    await extractMonoWav(mixSource?.speech || soundtrack?.original || sourcePath, extractedWav);
 
     // The unified TEST handoff must not start the legacy Demucs/diarization
     // chain outside the same physical-GPU admission domain as voice tools.
-    if(process.env.OTG_ENV==="test"&&process.env.OTG_AUDIO_EDITING_ENABLED==="1")
+    if(!fixVoices && process.env.OTG_ENV==="test"&&process.env.OTG_AUDIO_EDITING_ENABLED==="1")
       releaseGpu=await acquireAuxiliary3090(`audio-analysis:${ownerKey}:${runId}`);
-    const demucs = await tryDemucs(sourcePath, workDir);
+    const demucs = fixVoices ? null : await tryDemucs(sourcePath, workDir);
     const analysisWav = demucs?.vocalsPath || extractedWav;
-    const expectedSpeakerCount = clampExpectedSpeakerCount(
+    const expectedSpeakerCount = fixVoices ? 0 : clampExpectedSpeakerCount(
       body.expectedSpeakerCount ?? body.speakerCount ?? body.maxSpeakers
     );
-    const localVoices = await tryLocalDiarization(analysisWav, duration, expectedSpeakerCount, workDir);
-    const externalVoices = localVoices || await tryExternalDiarization(analysisWav, duration, expectedSpeakerCount, workDir);
+    const localVoices = await tryLocalDiarization(analysisWav, duration, expectedSpeakerCount, workDir, fixVoices);
+    const externalVoices = localVoices || (fixVoices ? null : await tryExternalDiarization(analysisWav, duration, expectedSpeakerCount, workDir));
     const segments = externalVoices ? [] : await detectSpeechSegments(analysisWav, duration);
 
     const totalSpeechSeconds = Math.round(
@@ -674,13 +782,52 @@ export async function POST(request: NextRequest) {
       ).reduce((sum, segment) => sum + Math.max(0, segment.end - segment.start), 0) * 100
     ) / 100;
 
-    const voices = externalVoices || buildEstimatedSpeakerLanes(
+    const voices: DetectedVoiceLane[] = externalVoices || buildEstimatedSpeakerLanes(
       segments,
       totalSpeechSeconds,
       Boolean(demucs?.vocalsPath),
       expectedSpeakerCount
     );
 
+    if (fixVoices) {
+      if (!localVoices) warnings.push("Speakers could not be identified reliably. Listen to the original or try a clearer clip.");
+      const castPlan = await correctionCastPlan(ownerKey, sourceJobId,request);
+      const expectedCastSpeakers = new Set(castPlan?.events.filter(event => (
+        event.wordText.trim() && castPlan.bindings.some(binding => binding.characterId === event.characterId)
+      )).map(event => event.characterId)).size;
+      const detectedSpeakerCount = localVoices?.length || 0;
+      const castCountMismatch = Boolean(detectedSpeakerCount && expectedCastSpeakers && detectedSpeakerCount !== expectedCastSpeakers);
+      if (castCountMismatch) warnings.push("Some speakers need confirmation. Play the cue before choosing a character.");
+      const overlapFound = labelBlockedVoiceIntervals(voices, Boolean(localVoices), duration);
+      if (overlapFound) warnings.push("Intervals with overlapping speakers will keep their original audio.");
+      const matched = localVoices && mixSource && castPlan?.events.length
+        ? await matchH3CorrectionCues(castPlan, mixSource.speech, voices, castCountMismatch, workDir, request.signal)
+        : voices;
+      const voiceTargets = castPlan ? (await Promise.all(castPlan.bindings.map(async member => {
+        const pinned = castPlan.voiceTargets.find(target => target.characterId === member.characterId);
+        return pinned ? verifiedCorrectionVoice(request, pinned)
+          : resolveSavedH3CorrectionVoice(request, ownerKey, member.characterId).catch(() => null);
+      }))).filter(target => !!target) : [];
+      const cast = castPlan?.bindings.map(member => {
+        const target = voiceTargets.find(entry => entry.characterId === member.characterId);
+        return {characterId: member.characterId, name: member.name, voiceId: target?.modelId, voiceName: target?.sample.name};
+      });
+      for (const lane of matched) {
+        const character = cast?.find(member => member.characterId === lane.suggestedCharacterId);
+        if (!character) continue;
+        if (!lane.needsCharacterConfirmation) lane.label = character.name;
+        lane.suggestedTargetVoiceId = character.voiceId;
+        lane.suggestedTargetVoiceName = character.voiceName;
+      }
+      await extractVoiceLaneSamples(matched, analysisWav, workDir);
+      const sourceFileName = safeName(body.sourceFileName, path.basename(sourcePath));
+      const mixReady = Boolean(mixSource && localVoices && matched.some(voice => voice.segments.some(segment => !segment.blockedReason)));
+      await writeCorrectionRecord(ownerKey, runId, "analysis", {sourcePath, sourceFileName, sourceJobId, contentMode, durationSeconds: duration, mixSource,
+        voices: matched, cast, voiceTargets, mixReady, warnings});
+      failedFixVoicesDir = "";
+      return NextResponse.json({ok: true, analysisId: runId, sourceJobId, sourceVideoUrl: correctionMediaUrl(sourcePath), sourceFileName, durationSeconds: duration,
+        voices: matched.map(({samplePath: _samplePath, ...voice}) => voice), cast, mixReady, warnings}, {headers: {"Cache-Control": "private, no-store"}});
+    }
     await extractVoiceLaneSamples(voices, analysisWav, workDir);
 
     const result = {
@@ -721,6 +868,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error: any) {
+    if (error instanceof RequestError) return NextResponse.json({ok:false,error:error.message},{status:error.status});
     if (error instanceof AuxiliaryGpuBusyError) return NextResponse.json({ok:false,error:error.message},{status:409});
     if (error instanceof SessionInvalidError) return NextResponse.json({ok:false,error:"Unauthorized"},{status:401});
     if (error instanceof ProductionAudioAccessError) return NextResponse.json({ok:false,error:error.message},{status:404});
@@ -731,5 +879,8 @@ export async function POST(request: NextRequest) {
       },
       { status: 500 }
     );
-  } finally {releaseGpu?.();}
+  } finally {
+    releaseGpu?.();
+    if (failedFixVoicesDir) await fs.rm(failedFixVoicesDir, {recursive: true, force: true}).catch(() => undefined);
+  }
 }
