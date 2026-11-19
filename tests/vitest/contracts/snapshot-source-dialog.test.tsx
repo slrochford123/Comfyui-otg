@@ -1,0 +1,13 @@
+// @vitest-environment jsdom
+import React from "react";
+import "@testing-library/jest-dom/vitest";
+import {cleanup,fireEvent,render,screen,within} from "@testing-library/react";
+import {afterEach,beforeEach,expect,it,vi} from "vitest";
+import ImageSourcePickerBridge from "@/app/app/components/ImageSourcePickerBridge";
+import VideoSnapshotPicker from "@/app/app/components/VideoSnapshotPicker";
+beforeEach(()=>{vi.stubGlobal("React",React);vi.spyOn(HTMLMediaElement.prototype,"pause").mockImplementation(()=>{});vi.stubGlobal("URL",Object.assign(class extends URL {},{createObjectURL:vi.fn(()=>"blob:video"),revokeObjectURL:vi.fn()}));});
+afterEach(()=>{cleanup();vi.restoreAllMocks();vi.unstubAllGlobals();});
+function setup(){const close=vi.fn();render(<><ImageSourcePickerBridge/><VideoSnapshotPicker open allowFrameEdit onClose={close} onSnapshot={vi.fn()}/></>);const snapshot=screen.getByRole("dialog",{name:"Snapshot from Video"});const field=snapshot.querySelector<HTMLInputElement>('input[type=file]')!;fireEvent.click(field);return{close,snapshot,field,source:screen.getByRole("dialog",{name:"Choose media source"})};}
+it("keeps the source chooser above Snapshot and returns cancellation to the live input",()=>{const{snapshot,source,field,close}=setup();expect(source.parentElement).toHaveClass("z-[13000]");expect(snapshot).toHaveClass("z-[12000]");expect(source.closest("[inert]")).toBeNull();fireEvent.click(within(source).getByRole("button",{name:"Cancel",exact:true}));expect(source).not.toBeInTheDocument();expect(snapshot).toBeInTheDocument();expect(field.isConnected).toBe(true);expect(close).not.toHaveBeenCalled();fireEvent.click(field);expect(screen.getByRole("dialog",{name:"Choose media source"})).toBeInTheDocument();});
+it("Escape dismisses only the top source chooser and preserves Snapshot",()=>{const{close,snapshot,source}=setup();fireEvent.keyDown(within(source).getByRole("button",{name:"Phone storage"}),{key:"Escape"});expect(source).not.toBeInTheDocument();expect(snapshot).toBeInTheDocument();expect(close).not.toHaveBeenCalled();fireEvent.keyDown(snapshot,{key:"Escape"});expect(close).toHaveBeenCalledTimes(1);});
+it.each(["Phone storage","Photos / Google Photos"])("%s sends its selected video to the still-open Snapshot",name=>{const{field,snapshot,source,close}=setup();fireEvent.click(within(source).getByRole("button",{name}));expect(field.isConnected).toBe(true);fireEvent.change(field,{target:{files:[new File(["clip"],"shore.mp4",{type:"video/mp4"})]}});expect(snapshot.querySelector("video")).toBeInTheDocument();expect(within(snapshot).getByText("Replace Video",{exact:true})).toBeInTheDocument();expect(close).not.toHaveBeenCalled();});
