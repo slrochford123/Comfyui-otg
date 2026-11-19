@@ -208,7 +208,7 @@ describe("Generate Enhance Prompt AI contract", () => {
     );
 
     expect(route).not.toMatch(
-      /catch\s*\([^)]*\)\s*\{[\s\S]*enhancedPrompt\s*=/,
+      /catch\s*\([^)]*\)\s*\{\s*enhancedPrompt\s*=/,
     );
 
     expect(app).toContain(

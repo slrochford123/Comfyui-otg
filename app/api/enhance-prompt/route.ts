@@ -4,7 +4,7 @@ import { qwenDurableFetch } from "@/lib/workers/qwenDurableFetch";
 import {LOCAL_MODEL,local3060Enabled} from "@/lib/workers/local3060";
 import { requireSessionUser } from "@/lib/sessionUser";
 import { SessionInvalidError } from "@/lib/ownerKey";
-import { h3DraftEnhancementInstructions, h3DraftEnhancementInput, h3DraftEnhancementSchema, h3DraftEnhancementTokens, readH3DraftEnhancement } from "@/lib/h3DraftEnhancement";
+import { H3EnhancementDetailError, h3DraftExpansionReminder, h3DraftEnhancementInstructions, h3DraftEnhancementInput, h3DraftEnhancementSchema, h3DraftEnhancementTokens, readH3DraftEnhancement } from "@/lib/h3DraftEnhancement";
 import { createOpenAIText, openAIEnabled, openAIModels } from "@/lib/openai/provider";
 import {
   appendProtectedDialogueBlock,
@@ -485,7 +485,8 @@ async function qwenGenerateEnhancement(
   level: EnhanceLevel,
   context: GenerateEnhanceContext,
   h3Draft = false,
-) {
+  expansionAttempt = 0,
+): Promise<{enhancedPrompt:string;model:string}> {
   const routedModel = local3060Enabled() ? LOCAL_MODEL : promptEnhanceModelForContext(context);
 
   /*
@@ -532,7 +533,7 @@ async function qwenGenerateEnhancement(
       think: false,
       _otgForceModelUnload: true,
       prompt: h3Draft
-        ? `/no_think\n${h3DraftEnhancementInstructions(level)}\n\nScene draft:\n${h3DraftEnhancementInput(prompt)}`
+        ? `/no_think\n${h3DraftEnhancementInstructions(level)}${expansionAttempt ? "\n"+h3DraftExpansionReminder(prompt) : ""}\n\nScene draft:\n${h3DraftEnhancementInput(prompt)}`
         : buildQwenEnhancePrompt(prompt, level, context),
       format: h3Draft ? h3DraftEnhancementSchema(prompt) : {
         type: "object",
@@ -653,9 +654,18 @@ async function qwenGenerateEnhancement(
     );
   }
 
-  const enhancedPrompt = h3Draft
-    ? readH3DraftEnhancement(prompt, payload?.response)
-    : ensureProtectedDialogueInOutput(prompt, extractEnhancedPrompt(payload?.response));
+  let enhancedPrompt:string;
+  try {
+    enhancedPrompt = h3Draft
+      ? readH3DraftEnhancement(prompt, payload?.response, level)
+      : ensureProtectedDialogueInOutput(prompt, extractEnhancedPrompt(payload?.response));
+  } catch(error) {
+    // One bounded local text retry for insufficient detail, never for damaged dialogue.
+    // Keep the original input and existing durable admission; no cloud fallback.
+    if(error instanceof H3EnhancementDetailError && expansionAttempt===0)
+      return qwenGenerateEnhancement(prompt,level,context,h3Draft,1);
+    throw error;
+  }
   if (!enhancedPrompt) {
     throw new Error(
       "Prompt enhancer returned no text. The original prompt was preserved.",
@@ -693,7 +703,7 @@ function errorStatus(error: unknown) {
 
 function safeEnhanceFallbackMessage(error: unknown) {
   const raw = error instanceof Error ? error.message : String(error || "");
-  if (/^The enhancer (?:changed dialogue|changed description slots|repeated dialogue|did not preserve|returned an unfinished|did not return an editable|inserted speech or formatting|inserted extra dialogue)/.test(raw)) return raw;
+  if (/^The enhancer (?:did not expand the Long scene draft enough|changed dialogue|changed description slots|repeated dialogue|did not preserve|returned an unfinished|did not return an editable|inserted speech or formatting|inserted extra dialogue)/.test(raw)) return raw;
   if (
     /libcublas|cuda|cudnn|library .*not found|cannot be loaded/i.test(raw)
   ) {
@@ -757,7 +767,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             } },
           });
           const enhancedPrompt = h3Draft
-            ? readH3DraftEnhancement(originalPrompt, result.text)
+            ? readH3DraftEnhancement(originalPrompt, result.text, level)
             : ensureProtectedDialogueInOutput(originalPrompt, extractEnhancedPrompt(result.text));
           if (!enhancedPrompt) throw new Error("Prompt enhancer returned no text. The original prompt was preserved.");
           return { enhancedPrompt, model };
