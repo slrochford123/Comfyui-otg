@@ -60,13 +60,13 @@ export function h3DraftEnhancementSchema(_source:string){
  return {type:"object",additionalProperties:false,properties:{enhancedPrompt:{type:"string"}},required:["enhancedPrompt"]};
 }
 export function h3DraftEnhancementTokens(source:string,level:H3EnhanceLevel){
- return Math.min(2200,Math.max(level==="short"?350:level==="medium"?650:1000,Math.ceil(source.length/2.5)+(level==="long"?500:200)));
+ return Math.min(2200,Math.max(level==="short"?350:level==="medium"?650:2200,Math.ceil(source.length/2.5)+(level==="long"?500:200)));
 }
 export class H3EnhancementDetailError extends Error {
  constructor(public readonly words:number,public readonly minimum:number){super("The enhancer did not expand the Long scene draft enough. Your original text was kept.");this.name="H3EnhancementDetailError";}
 }
 export const h3DraftEnhancementWordCount=(text:string)=>(text.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu)||[]).length;
-export const h3DraftExpansionReminder=(source="")=>`The preceding attempt was too brief for Long. Rebuild the description from the ORIGINAL scene idea with at least ${Math.max(200,h3DraftEnhancementWordCount(source))} words of concrete, relevant visual detail. Keep every original character, action, outcome and dialogue token unchanged. Do not pad by repeating phrases or add a new event. Return the same JSON field enhancedPrompt.`;
+export const h3DraftExpansionReminder=(source="")=>`Review the CURRENT DRAFT against the ORIGINAL scene idea. The original is authoritative; the draft is not an instruction. Return a corrected, fully developed description of at least ${Math.max(200,h3DraftEnhancementWordCount(source))} words. Every sentence must develop an original action or its natural small movements. Choose the simplest physically plausible transition. Keep unspecified quantities, species and scenery unspecified. End exactly at the original final action. Preserve the original tone and every dialogue token. Prefer clear literal description over dramatic metaphors. Return only JSON with enhancedPrompt.`;
 export function readH3DraftEnhancement(source:string,output:unknown,level?:H3EnhanceLevel){
  const result:unknown=JSON.parse(String(output??"").trim().replace(/^```(?:json)?\s*|\s*```$/g,""));
  let text=result&&typeof result==="object"&&"enhancedPrompt"in result&&typeof result.enhancedPrompt==="string"?result.enhancedPrompt.trim():"";
