@@ -1,3 +1,4 @@
+const {newH3EnhancementSeed,acceptH3EnhancementVariation,H3EnhancementVariationError,h3EnhancementVariationReminder}=require("../../lib/h3EnhancementVariations.ts");
 /* Durable TEST Director job. Shared queue, independent model, no cloud calls. */
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),net=require('node:net');
 const {spawn,execFileSync}=require('node:child_process');
@@ -5,7 +6,7 @@ const {once}=require('node:events');
 const {labRoot}=require('../../lib/experiments/store.ts');
 const {directorRoot,director3060Runtime,directorMessages,validateDirectorRevision,directorResponseSchema,nsfwPlanMessages}=require('../../lib/experiments/director3060.ts');
 const {nsfwClipMessages}=require('../../lib/experiments/nsfwClipDirection.ts');
-const {H3EnhancementDetailError,h3DraftExpansionReminder,h3DraftEnhancementInstructions,h3DraftEnhancementInput,h3DraftEnhancementSchema,readH3DraftEnhancement}=require('../../lib/h3DraftEnhancement.ts');
+const {H3EnhancementLevelError,h3DraftLevelReminder,h3DraftEnhancementInstructions,h3DraftEnhancementInput,h3DraftEnhancementSchema,readH3DraftEnhancement}=require('../../lib/h3DraftEnhancement.ts');
 const {compileH3SceneDirection,h3SceneDirectionSchema,validateH3DirectedDialogue}=require('../../lib/openai/h3SceneDirection.ts');
 const {acquireExternalMediaGpuChoice,tickMediaGpuQueue,getMediaQueueJob}=require('../../lib/workers/mediaGpuQueue.ts');
 const {assertSharedMediaGpuOwned}=require('../../lib/workers/mediaGpuAdmission.ts');
@@ -48,7 +49,7 @@ async function main(){
  let format;
  if(enhancement){
    messages=[{role:'system',content:h3DraftEnhancementInstructions(enhancement.level)},{role:'user',content:h3DraftEnhancementInput(enhancement.scene)}];
-   format=h3DraftEnhancementSchema(enhancement.scene);
+   format=h3DraftEnhancementSchema(enhancement.scene,enhancement.level);
  }else if(clipDirection){
    messages=nsfwClipMessages(clipDirection);
    format=h3SceneDirectionSchema(clipDirection.context.mode);
@@ -91,8 +92,9 @@ async function main(){
    const mb=Number(execFileSync('nvidia-smi',['-i',cfg.gpuUuid,'--query-gpu=memory.used','--format=csv,noheader,nounits'],{encoding:'utf8',timeout:3000}).trim());peak=Math.max(peak,mb);
    update({peakGpuMiB:peak});
  }catch(e){abort.abort(e);}finally{monitorBusy=false;}},4000);
+ let samplingSeed=request.settings.seed;
  async function infer(){
- const response=await fetch(base+'/api/chat',{method:'POST',headers:{'content-type':'application/json'},signal:AbortSignal.any([abort.signal,AbortSignal.timeout(600000)]),body:JSON.stringify({model:cfg.model,messages,stream:true,think:false,format,keep_alive:'30s',options:{seed:request.settings.seed,temperature:enhancement?.level==='short'?.25:enhancement?.level==='medium'?.35:.6,num_ctx:8192,num_predict:2200}})});
+ const response=await fetch(base+'/api/chat',{method:'POST',headers:{'content-type':'application/json'},signal:AbortSignal.any([abort.signal,AbortSignal.timeout(600000)]),body:JSON.stringify({model:cfg.model,messages,stream:true,think:false,format,keep_alive:'30s',options:{seed:samplingSeed,temperature:enhancement?.level==='short'?.25:enhancement?.level==='medium'?.35:.6,num_ctx:8192,num_predict:2200}})});
  if(!response.ok)throw Error('Director inference HTTP '+response.status);
  let text='',buffer='',final;
  const reader=response.body.pipeThrough(new TextDecoderStream()).getReader();
@@ -104,15 +106,19 @@ async function main(){
  if(enhancement)update({enhancementAttempts:1});
  let {text,final}=await infer();
  if(enhancement){
-  try{readH3DraftEnhancement(enhancement.scene,text,enhancement.level);}
+  // Preserve the private model receipt even when validation rejects it.
+  write("model-response-attempt-1.json",JSON.parse(text));
+  try{const prompt=readH3DraftEnhancement(enhancement.scene,text,enhancement.level);acceptH3EnhancementVariation(request.owner,enhancement.scene,enhancement.level,prompt,samplingSeed,"nsfw");}
   catch(error){
-   if(!(error instanceof H3EnhancementDetailError))throw error;
-   write("model-response-attempt-1.json",JSON.parse(text));
-   update({stage:"Expanding the Long draft with more visual detail",enhancementAttempts:2});
-   messages=[...messages,{role:"user",content:h3DraftExpansionReminder(enhancement.scene)}];
+   if(!(error instanceof H3EnhancementLevelError)&&!(error instanceof H3EnhancementVariationError))throw error;
+   update({stage:"Preparing a fresh draft at the requested detail level",enhancementAttempts:2});
+   samplingSeed=newH3EnhancementSeed();
+   write("enhancement-retry.json",{seed:samplingSeed,reason:error.name});
+   messages=[...messages,{role:"user",content:h3DraftLevelReminder(enhancement.scene,enhancement.level)+"\n"+h3EnhancementVariationReminder}];
    write("messages-expansion.json",messages);
    ({text,final}=await infer());
-   readH3DraftEnhancement(enhancement.scene,text,enhancement.level);
+   write("model-response-attempt-2.json",JSON.parse(text));
+   const prompt=readH3DraftEnhancement(enhancement.scene,text,enhancement.level);acceptH3EnhancementVariation(request.owner,enhancement.scene,enhancement.level,prompt,samplingSeed,"nsfw");
   }
  }
  const resident=await (await fetch(base+'/api/ps',{signal:AbortSignal.timeout(5000)})).json();

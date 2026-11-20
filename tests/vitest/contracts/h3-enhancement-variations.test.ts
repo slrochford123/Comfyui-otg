@@ -1,0 +1,15 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import Database from 'better-sqlite3';
+import {beforeEach,afterEach,expect,it,vi} from 'vitest';
+const m=vi.hoisted(()=>({root:''}));
+vi.mock('@/lib/paths',()=>({get OTG_DATA_ROOT(){return m.root;}}));
+import {newH3EnhancementSeed,acceptH3EnhancementVariation} from '@/lib/h3EnhancementVariations';
+beforeEach(()=>{m.root=fs.mkdtempSync(path.join(os.tmpdir(),'enhance-variations-'));});
+afterEach(()=>{fs.rmSync(m.root,{recursive:true,force:true});});
+it('uses fresh random nonzero 31-bit seeds',()=>{const seeds=Array.from({length:100},newH3EnhancementSeed);expect(new Set(seeds).size).toBe(100);expect(seeds.every(n=>Number.isInteger(n)&&n>0&&n<2147483647)).toBe(true);});
+it('persists uniqueness across reopened connections and normalized whitespace/case/punctuation',()=>{acceptH3EnhancementVariation('owner','A bird flies.','short','A bird glides gently through the opening.',123);expect(()=>acceptH3EnhancementVariation('owner','A bird flies!','short','A BIRD glides gently through the opening!',456)).toThrow('fresh variation');acceptH3EnhancementVariation('owner','A bird flies.','short','The bird passes through the opening with a gentle flutter.',789);});
+it('rejects an unchanged result rather than pretending it was enriched',()=>{expect(()=>acceptH3EnhancementVariation('owner','A bird flies.','short','A bird flies!',123)).toThrow('fresh variation');});
+it('keeps accounts, levels and original ideas independently scoped',()=>{for(const [owner,source,level] of [['a','A bird flies.','short'],['b','A bird flies.','short'],['a','A bird flies.','medium'],['a','A bird lands.','short']] as const)acceptH3EnhancementVariation(owner,source,level,'A bird moves across the opening.',123);});
+it('stores no raw prompt, result or account identifier',()=>{acceptH3EnhancementVariation('private-owner','A private bird scene.','short','A private feathered visitor flutters into view.',123);const db=new Database(path.join(m.root,'h3-enhancement/variations.sqlite'),{readonly:true});const text=JSON.stringify(db.prepare('SELECT * FROM variations').all());db.close();expect(text).not.toContain('private');expect(text).not.toContain('bird scene');});

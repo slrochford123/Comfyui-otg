@@ -17,6 +17,14 @@ import {
   type ShawnOccupancy,
 } from "@/lib/workers/clusterGpu";
 
+/** Keep the qualified context/output budget fixed; accept only text sampling controls. */
+export function local3060SamplingOptions(requested?: Record<string,unknown>) {
+  const temperature = typeof requested?.temperature === "number" && Number.isFinite(requested.temperature)
+    ? Math.max(0,Math.min(1.2,requested.temperature)) : 0.35;
+  const seed = requested?.seed;
+  return {temperature,...(typeof seed === "number" && Number.isSafeInteger(seed) && seed > 0 && seed <= 2147483647 ? {seed} : {})};
+}
+
 export const QWEN_CLUSTER_MODEL = "qwen3.6:27b";
 export const SLR_QWEN_CONTEXT_CAP = 32_768;
 export const SHAWN_QWEN_CONTEXT_CAP = 262_144;
@@ -504,7 +512,7 @@ export async function execute3060(path:"/api/generate"|"/api/chat",payload:Recor
     started=true;
     const r=await fetch(LOCAL_OLLAMA+path,{method:"POST",headers:{"content-type":"application/json",...local3060Headers(reservation.fence)},redirect:"error",signal,body:JSON.stringify({
       model:LOCAL_MODEL,...Object.fromEntries(["prompt","messages","system","images","format","tools"].filter(k=>payload[k]!==undefined).map(k=>[k,payload[k]])),
-      options:{num_ctx:LOCAL_CONTEXT,num_predict:numPredict,temperature:0.35},think:false,keep_alive:"45s",stream:!!options.onChunk,
+      options:{num_ctx:LOCAL_CONTEXT,num_predict:numPredict,...local3060SamplingOptions(requested)},think:false,keep_alive:"45s",stream:!!options.onChunk,
     })});
      let result:Record<string,unknown>;
      let consumerFailed=false,consumerError:unknown;

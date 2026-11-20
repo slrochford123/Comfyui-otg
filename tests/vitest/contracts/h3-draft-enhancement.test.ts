@@ -37,10 +37,16 @@ describe("H3 draft enhancement", () => {
 });
 
 it('defines a substantial Long expansion while retaining the same short scene and existing facts',()=>{
- const prompt=h3DraftEnhancementInstructions('long');expect(prompt).toContain('200–300 word');expect(prompt).toContain('not a grammar correction');expect(prompt).toContain('Do not invent family relationships');expect(prompt).toContain('same short clip');
+ const prompt=h3DraftEnhancementInstructions('long');expect(prompt).toContain('200–300 words');expect(prompt).toContain('grammar correction');expect(prompt).toContain('character identities');expect(prompt).toContain('original story');
 });
 it('rejects the two-sentence result seen in the owner screenshot as Long, while retaining normal Short behavior',()=>{
  const source='three boys walk into the room and look at the woman with mischievous looks';const out=JSON.stringify({enhancedPrompt:'Three boys enter the room. They approach the woman with mischievous smiles.'});expect(()=>readH3DraftEnhancement(source,out,'long')).toThrow('did not expand');expect(readH3DraftEnhancement(source,out,'short')).toContain('Three boys');
 });
 it('accepts a developed Long paragraph without adding compiled H3 sections',()=>{expect(readH3DraftEnhancement('Three boys enter the room and approach the woman with mischievous smiles.',JSON.stringify({enhancedPrompt:longDraft}),'long')).toBe(longDraft);});
 it('does not allow Long to compress an already detailed draft into fewer words',()=>{expect(()=>readH3DraftEnhancement(longDraft+' '+longDraft,JSON.stringify({enhancedPrompt:longDraft}),'long')).toThrow('did not expand');});
+
+it('rejects an over-expanded Short or an underdeveloped Medium without truncating a longer original',()=>{
+ const content=JSON.stringify({enhancedPrompt:longDraft});expect(()=>readH3DraftEnhancement('Three boys enter a room.',content,'short')).toThrow('Short detail level');expect(()=>readH3DraftEnhancement('Three boys enter a room.',JSON.stringify({enhancedPrompt:'Three boys walk into the room together.'}),'medium')).toThrow('Medium detail level');expect(readH3DraftEnhancement(longDraft,content,'short')).toBe(longDraft);
+});
+
+it("requires substantial Long prose in the model output schema",async()=>{const {h3DraftEnhancementSchema}=await import("@/lib/h3DraftEnhancement");expect(h3DraftEnhancementSchema("A bird flies in.","long").properties.enhancedPrompt.minLength).toBe(1200);expect(h3DraftEnhancementSchema("A bird flies in.","short").properties.enhancedPrompt.minLength).toBeUndefined();});

@@ -1,3 +1,4 @@
+import {newH3EnhancementSeed} from "@/lib/h3EnhancementVariations";
 import fs from "node:fs";
 import path from "node:path";
 import {spawn} from "node:child_process";
@@ -73,7 +74,7 @@ export async function startNsfwDirector(owner:string,data:Record<string,unknown>
    if ((error as NodeJS.ErrnoException).code === "EEXIST") return readNsfwDirector(owner,id);
    throw error;
  }
- const request={id,owner,sessionId:session.id,model:planning?"h3-nsfw-director":"h3-nsfw-prompt",direction,...(!enhancing?{creative:session.settings}:{}),...(promptOperation?{promptOperation}:{}),...(planning&&previous?.plan?{directorContext:previous.plan,parentJob:previous.id}:{}),settings:{directorModel:"huihui9b",mode:"text",prompt:planning?direction:enhancing?session.settings.prompt.trim():instruction,seed:session.settings.seed},sources:[],...(!access.admin?{authorization:{version:access.version}}:{})};
+ const request={id,owner,sessionId:session.id,model:planning?"h3-nsfw-director":"h3-nsfw-prompt",direction,...(!enhancing?{creative:session.settings}:{}),...(promptOperation?{promptOperation}:{}),...(planning&&previous?.plan?{directorContext:previous.plan,parentJob:previous.id}:{}),settings:{directorModel:"huihui9b",mode:"text",prompt:planning?direction:enhancing?session.settings.prompt.trim():instruction,seed:enhancing?newH3EnhancementSeed():session.settings.seed},sources:[],...(!access.admin?{authorization:{version:access.version}}:{})};
  const status={id,state:"queued",created:Date.now()/1000,stage:"Waiting for Huihui Qwen on RTX 3060",cleanedUp:false};
  fs.writeFileSync(path.join(dir,"request.json"),JSON.stringify(request),{flag:"wx",mode:0o600});
  fs.writeFileSync(path.join(dir,"status.json"),JSON.stringify(status),{flag:"wx",mode:0o600});

@@ -26,3 +26,28 @@ describe('exact speech restoration',()=>{
 
 it.each(['"[[SLR_DIALOGUE_1]]."',"'[[SLR_DIALOGUE_1]]!'",'“[[SLR_DIALOGUE_1]]?”'])('accepts a punctuation-only quoted slot without inventing or doubling words: %s',slot=>{const out=read('A guard says hello','A guard replies, '+slot);expect(out).toContain('hello');expect(out.match(/hello/g)).toHaveLength(1);});
 it('still rejects new words inside a quote containing a correct slot',()=>{expect(()=>read('A guard says hello','A guard replies, "[[SLR_DIALOGUE_1]] and run away."')).toThrow('extra dialogue');});
+
+describe('speech attribution chains and short dialogue in narration',()=>{
+ const scene='The mother tells the boy in yellow named terrence she says "Terrence go to your room" Terrence replies "but Mom" she yells she yells "now!" Terrence then starts to walk away looks back at the mother in the three boys then walks off screen the mother looks at the boy in green and said "let\'s get this over with"';
+ it('recognizes only the four real lines in the recorded failed scene',()=>{
+  expect(h3EnhancementDialogue(scene).map(s=>s.text)).toEqual(['"Terrence go to your room"','"but Mom"','"now!"','"let\'s get this over with"']);
+ });
+ it('accepts each exact spoken slot once while ordinary she and now remain editable narration',()=>{
+  const input=h3DraftEnhancementInput(scene);
+  const out=read(scene,input+' She now stands quietly. She keeps her gaze on the doorway.');
+  expect(out).toContain('She now stands quietly.');
+  expect(out.match(/"now!"/g)).toHaveLength(1);
+ });
+ it('does not count narration as another utterance of a one-word line',()=>{
+  expect(read('The guard says "Now!"','The guard now turns toward the doorway and says [[SLR_DIALOGUE_1]]. The room is now quiet.')).toContain('"Now!"');
+ });
+ it('keeps genuine mixed dictated and quoted turns',()=>{
+  expect(h3EnhancementDialogue('Darius says Hello, Raphael says "Goodbye."').map(s=>s.text)).toEqual(['Hello','"Goodbye."']);
+ });
+ it.each(['The guard says [[SLR_DIALOGUE_1]]. Another guard says now.','The guard says [[SLR_DIALOGUE_1]]. Another guard says "Now!"'])('rejects actual repeated short speech beside a valid slot: %s',out=>{
+  expect(()=>read('The guard says "Now!"',out)).toThrow();
+ });
+ it('rejects a raw repeated longer line even if unquoted',()=>{
+  expect(()=>read('The guard says "Hold the door."','The guard says [[SLR_DIALOGUE_1]]. Then he says Hold the door.')).toThrow();
+ });
+});
